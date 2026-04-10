@@ -1,0 +1,142 @@
+import { ethers } from "ethers";
+import * as dotenv from "dotenv";
+
+dotenv.config();
+
+const RPC_URL = process.env.KITE_RPC_URL || "https://rpc-testnet.gokite.ai/";
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+
+/**
+ * Result from the scoring engine
+ */
+export interface ScoreResult {
+  score: number;
+  paymentRate: number;
+  diversity: number;
+  txCount: number;
+  agentAgeDays: number;
+  breakdown: {
+    paymentRate: number;
+    txVolume: number;
+    age: number;
+    diversity: number;
+    sessions: number;
+  };
+}
+
+/**
+ * Computes an agent's credit score based on Kite chain data
+ */
+export async function computeScore(agentAddress: string): Promise<ScoreResult> {
+  console.log(`\n🔍 Scoring agent: ${agentAddress}`);
+
+  // 1. Get total tx count
+  const txCount = await provider.getTransactionCount(agentAddress);
+  if (txCount === 0) {
+    console.log("  ⚠️ Agent has zero transactions. Base score assigned.");
+    return emptyScore();
+  }
+
+  // 2. Scan last 1000 blocks stepping by 5
+  const latestBlock = await provider.getBlockNumber();
+  const scanDepth = 1000;
+  const step = 5;
+  const startBlock = Math.max(0, latestBlock - scanDepth);
+
+  let successCount = 0;
+  let failCount = 0;
+  let firstSeenBlock = latestBlock;
+  const uniquePayees = new Set<string>();
+
+  console.log(`  Scanning blocks ${latestBlock} to ${startBlock} (step ${step})...`);
+
+  for (let b = latestBlock; b >= startBlock; b -= step) {
+    try {
+      const block = await provider.getBlock(b, true);
+      if (!block) continue;
+
+      for (const tx of block.prefetchedTransactions) {
+        // block.prefixedTransactions is (string | TransactionResponse)[] in ethers v6 if prefetched
+        // If it's a string (hash), we'd need to fetch, but we passed true to getBlock
+        const fullTx = tx as ethers.TransactionResponse;
+
+        if (fullTx.from?.toLowerCase() === agentAddress.toLowerCase()) {
+          try {
+            const receipt = await provider.getTransactionReceipt(fullTx.hash);
+            if (!receipt) continue;
+
+            if (receipt.status === 1) {
+              successCount++;
+              if (fullTx.to) uniquePayees.add(fullTx.to.toLowerCase());
+            } else {
+              failCount++;
+            }
+
+            if (b < firstSeenBlock) firstSeenBlock = b;
+
+          } catch (receiptError) {
+            console.error(`    ❌ Error fetching receipt for ${fullTx.hash}:`, receiptError);
+          }
+        }
+      }
+    } catch (blockError) {
+      console.error(`    ❌ Error fetching block ${b}:`, blockError);
+    }
+  }
+
+  // 5. Derive metrics
+  const totalProcessed = successCount + failCount;
+  const paymentRate = totalProcessed > 0 ? Math.round((successCount / totalProcessed) * 100) : 0;
+  const diversity = uniquePayees.size;
+  // 2-second blocks -> 86400 / 2 = 43200 blocks per day
+  const agentAgeBlocks = latestBlock - firstSeenBlock;
+  const agentAgeDays = Math.floor((agentAgeBlocks * 2) / 86400);
+
+  // 6. Apply weighted formula (base 300, max 850)
+  // points += paymentRate * 2.2            // 40% weight, max 220
+  // points += Math.min(txCount, 50) * 2.2  // 20% weight, max 110
+  // points += Math.min(agentAgeDays, 30) * 2.75 // 15% weight, max 82.5
+  // points += Math.min(diversity, 10) * 8.25    // 15% weight, max 82.5
+  // points += Math.min(successCount, 10) * 5.5  // 10% weight, max 55
+
+  const p_paymentRate = paymentRate * 2.2;
+  const p_txVolume = Math.min(txCount, 50) * 2.2;
+  const p_age = Math.min(agentAgeDays, 30) * 2.75;
+  const p_diversity = Math.min(diversity, 10) * 8.25;
+  const p_sessions = Math.min(successCount, 10) * 5.5;
+
+  const totalPoints = p_paymentRate + p_txVolume + p_age + p_diversity + p_sessions;
+  const score = Math.min(850, Math.max(300, Math.round(300 + totalPoints)));
+
+  return {
+    score,
+    paymentRate,
+    diversity,
+    txCount,
+    agentAgeDays,
+    breakdown: {
+      paymentRate: Math.round(p_paymentRate),
+      txVolume: Math.round(p_txVolume),
+      age: Math.round(p_age),
+      diversity: Math.round(p_diversity),
+      sessions: Math.round(p_sessions)
+    }
+  };
+}
+
+function emptyScore(): ScoreResult {
+  return {
+    score: 300,
+    paymentRate: 0,
+    diversity: 0,
+    txCount: 0,
+    agentAgeDays: 0,
+    breakdown: {
+      paymentRate: 0,
+      txVolume: 0,
+      age: 0,
+      diversity: 0,
+      sessions: 0
+    }
+  };
+}
