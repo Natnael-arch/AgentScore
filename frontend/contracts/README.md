@@ -4,10 +4,10 @@ This directory contains the Solidity smart contracts for the KiteCredit lending 
 
 ## Contracts
 
-### USDC.sol
-- ERC20 token representing USDC on Kite AI Testnet
+### USDT.sol
+- ERC20 token representing USDT on Kite AI Testnet
 - Mintable by the contract owner
-- 6 decimals (standard for USDC)
+- 6 decimals (standard for USDT)
 
 ### LendingPool.sol
 - Main lending protocol contract
@@ -56,11 +56,11 @@ npm run deploy:local
 ## Contract Features
 
 ### LendingPool
-- **Deposit**: Users can deposit USDC to earn interest
+- **Deposit**: Users can deposit USDT to earn interest
 - **Withdraw**: Users can withdraw their deposits plus earned interest
 - **Borrow**: Users can borrow against their collateral
 - **Repay**: Users can repay their borrowed amounts
-- **Collateral**: Users can add USDC as collateral
+- **Collateral**: Users can add USDT as collateral
 - **Interest**: Dynamic interest rate set by owner
 - **Collateral Ratio**: Configurable collateral requirement
 
@@ -99,5 +99,5 @@ npm run verify <contract-address>
 ## Notes
 
 - Make sure you have KITE tokens in your wallet for gas fees
-- The USDC contract starts with 1,000,000 USDC minted to the deployer
-- Initial liquidity of 5,000 USDC is added to the lending pool during deployment
+- The USDT contract starts with 1,000,000 USDT minted to the deployer
+- Initial liquidity of 5,000 USDT is added to the lending pool during deployment

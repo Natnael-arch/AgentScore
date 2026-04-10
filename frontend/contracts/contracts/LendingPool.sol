@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 contract LendingPool is Ownable, ReentrancyGuard {
-    IERC20 public usdcToken;
+    IERC20 public usdtToken;
     
     struct Lender {
         uint256 depositedAmount;
@@ -39,15 +39,15 @@ contract LendingPool is Ownable, ReentrancyGuard {
     event CollateralAdded(address indexed borrower, uint256 amount);
     event InterestPaid(address indexed lender, uint256 amount);
     
-    constructor(address _usdcToken) {
-        usdcToken = IERC20(_usdcToken);
+    constructor(address _usdtToken) {
+        usdtToken = IERC20(_usdtToken);
     }
     
     function deposit(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be greater than 0");
         
-        // Transfer USDC from lender to this contract
-        require(usdcToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        // Transfer USDT from lender to this contract
+        require(usdtToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
         
         // Update lender state
         if (lenders[msg.sender].depositedAmount == 0) {
@@ -88,8 +88,8 @@ contract LendingPool is Ownable, ReentrancyGuard {
         lender.lastDepositTime = block.timestamp;
         totalDeposits -= withdrawFromDeposit;
         
-        // Transfer USDC to lender
-        require(usdcToken.transfer(msg.sender, amount), "Transfer failed");
+        // Transfer USDT to lender
+        require(usdtToken.transfer(msg.sender, amount), "Transfer failed");
         
         emit Withdrawn(msg.sender, amount);
     }
@@ -112,7 +112,7 @@ contract LendingPool is Ownable, ReentrancyGuard {
         borrower.isCollateralLocked = true;
         totalBorrowed += amount;
         
-        require(usdcToken.transfer(msg.sender, amount), "Transfer failed");
+        require(usdtToken.transfer(msg.sender, amount), "Transfer failed");
         
         emit Borrowed(msg.sender, amount);
     }
@@ -130,7 +130,7 @@ contract LendingPool is Ownable, ReentrancyGuard {
             borrower.isCollateralLocked = false;
         }
         
-        require(usdcToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        require(usdtToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
         
         emit Repaid(msg.sender, amount);
     }
@@ -138,7 +138,7 @@ contract LendingPool is Ownable, ReentrancyGuard {
     function addCollateral(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be greater than 0");
         
-        require(usdcToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        require(usdtToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
         
         Borrower storage borrower = borrowers[msg.sender];
         borrower.collateralAmount += amount;
@@ -186,7 +186,8 @@ contract LendingPool is Ownable, ReentrancyGuard {
     }
     
     function emergencyWithdraw() external onlyOwner {
-        uint256 balance = usdcToken.balanceOf(address(this));
-        require(usdcToken.transfer(owner(), balance), "Transfer failed");
+        uint256 balance = usdtToken.balanceOf(address(this));
+        require(usdtToken.transfer(owner(), balance), "Transfer failed");
     }
+}
 }
