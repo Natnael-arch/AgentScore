@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import * as dotenv from "dotenv";
 import { ethers } from "ethers";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
@@ -24,8 +24,10 @@ if (!AGENT_KEY) throw new Error("Missing AGENT_PRIVATE_KEY");
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const wallet = new ethers.Wallet(AGENT_KEY, provider);
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const model = genAI.getGenerativeModel({ 
+  model: "gemini-2.5-flash",
+  systemInstruction: "You are a concise summariser. Return exactly 3 sentences."
 });
 
 // ABIs
@@ -48,15 +50,10 @@ async function summariseUrl(url: string): Promise<string> {
     .trim()
     .substring(0, 3000);
 
-  console.log("  🤖 Requesting summary from Claude...");
-  const msg = await anthropic.messages.create({
-    model: "claude-3-haiku-20240307", // Using the correct available haiku model string
-    max_tokens: 300,
-    system: "You are a concise summariser. Return exactly 3 sentences.",
-    messages: [{ role: "user", content: `Summarise this:\n\n${cleanText}` }],
-  });
+  console.log("  🤖 Requesting summary from Gemini...");
+  const msg = await model.generateContent(`Summarise this:\n\n${cleanText}`);
 
-  return (msg.content[0] as any).text;
+  return msg.response.text();
 }
 
 /**
