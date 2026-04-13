@@ -8,7 +8,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc",
+    "build": "rm -rf dist && npx tsc && ls -R dist",
     "start": "node dist/server.js"
   },
   "keywords": [],

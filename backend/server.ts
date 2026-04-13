@@ -1,3 +1,4 @@
+console.log("--- ENTRY POINT REACHED (server.ts) ---");
 import express from "express";
 import cors from "cors";
 import * as dotenv from "dotenv";
@@ -11,6 +12,10 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+
+// Diagnostic Endpoints
+app.get("/", (req, res) => res.send("AgentScore Backend is LIVE"));
+app.get("/health", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
 
 const ORACLE_WALLET = process.env.ORACLE_WALLET_ADDRESS;
 const PYUSD_ADDRESS = "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9";
@@ -111,6 +116,7 @@ app.get("/score/:addr/raw", async (req, res) => {
   }
 });
 
+console.log("--- ATTEMPTING TO LISTEN ---");
 app.listen(Number(PORT), "0.0.0.0", () => {
   console.log(`🚀 AgentScore API listening on port ${PORT}`);
   console.log(`Oracle Wallet: ${ORACLE_WALLET}`);
