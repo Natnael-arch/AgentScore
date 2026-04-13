@@ -111,7 +111,7 @@ app.get("/score/:addr/raw", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(Number(PORT), "0.0.0.0", () => {
   console.log(`🚀 AgentScore API listening on port ${PORT}`);
   console.log(`Oracle Wallet: ${ORACLE_WALLET}`);
 });
