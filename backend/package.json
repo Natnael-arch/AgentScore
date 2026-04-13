@@ -20,12 +20,12 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.1",
     "ethers": "^6.16.0",
-    "express": "^5.2.1"
-  },
-  "devDependencies": {
+    "express": "^5.2.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.6.0",
-    "ts-node": "^10.9.2",
     "typescript": "^6.0.2"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2"
   }
 }
