@@ -1,9 +1,9 @@
 import { ethers } from "ethers";
 import { config } from "../config.js";
 
-// Kite Testnet PYUSD Settings
-const PYUSD_ADDRESS = "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9";
-const DOMAIN_NAME = "PYUSD";
+// Kite Testnet USDT Settings
+const USDT_ADDRESS = "0x0fF5393387ad2f9f691FD6Fd28e07E3969e27e63";
+const DOMAIN_NAME = "USDT";
 const DOMAIN_VERSION = "1";
 
 const GASLESS_API = "https://gasless.gokite.ai/testnet";
@@ -29,7 +29,8 @@ export async function executeGaslessTransfer(toAddress: string, amountUi: number
     const provider = new ethers.JsonRpcProvider(config.kiteRpcUrl);
     const wallet = new ethers.Wallet(config.poolPrivateKey, provider);
 
-    const amountInWei = ethers.parseUnits(amountUi.toString(), 18).toString();
+    // USDT on Kite Testnet uses 6 decimals
+    const amountInUnits = ethers.parseUnits(amountUi.toFixed(6), 6).toString();
 
     // The timestamp must be greater than latest block timestamp
     const latestBlock = await provider.getBlock("latest");
@@ -43,13 +44,13 @@ export async function executeGaslessTransfer(toAddress: string, amountUi: number
       name: DOMAIN_NAME,
       version: DOMAIN_VERSION,
       chainId: config.kiteChainId,
-      verifyingContract: PYUSD_ADDRESS,
+      verifyingContract: USDT_ADDRESS,
     };
 
     const message = {
       from: wallet.address,
       to: toAddress,
-      value: amountInWei,
+      value: amountInUnits,
       validAfter,
       validBefore,
       nonce,
@@ -61,13 +62,13 @@ export async function executeGaslessTransfer(toAddress: string, amountUi: number
 
     const payload = {
       ...message,
-      tokenAddress: PYUSD_ADDRESS,
+      tokenAddress: USDT_ADDRESS,
       v: sigParams.v,
       r: sigParams.r,
       s: sigParams.s,
     };
 
-    console.log(`Sending gasless transfer for ${amountUi} PYUSD to ${toAddress}...`);
+    console.log(`Sending gasless transfer for ${amountUi} USDT to ${toAddress}...`);
     
     const response = await fetch(GASLESS_API, {
       method: "POST",
@@ -78,7 +79,7 @@ export async function executeGaslessTransfer(toAddress: string, amountUi: number
     if (!response.ok) {
       const respData = await response.text();
       console.error("Gasless transfer failed:", respData);
-      throw new Error(`Gasless API Error: ${response.statusText}`);
+      throw new Error(`Gasless API Error: ${response.statusText} - ${respData}`);
     }
 
     const { txHash } = await response.json();

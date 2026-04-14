@@ -4,103 +4,82 @@ import { CreditScoreGauge } from "@/components/CreditScoreGauge";
 import { motion } from "framer-motion";
 import { useWallet } from "@/contexts/WalletContext";
 import { api } from "@/lib/api";
+import { useBorrowFromLendingPool, useBorrowerPosition, useAgentOnChainData } from "@/lib/contracts";
 import { toast } from "sonner";
 import { Shield, Zap, Clock, AlertTriangle, ExternalLink, CreditCard, Activity, Calendar, TrendingUp, Wallet, FileCheck, AlertOctagon } from "lucide-react";
 
 export default function Borrow() {
   const { account, isConnected } = useWallet();
-  const [agentData, setAgentData] = useState<any>(null);
-  const [loanTerms, setLoanTerms] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
   const [borrowAmount, setBorrowAmount] = useState("");
-  const [loading, setLoading] = useState(false);
+  
+  // Real on-chain data hooks
+  const { data: onChainAgent, refetch: refetchAgent } = useAgentOnChainData(account);
+  const { data: borrowerPosition, refetch: refetchPosition } = useBorrowerPosition(account);
+  const { borrow, isPending } = useBorrowFromLendingPool(account);
 
-  // Fetch agent data and loan terms
-  useEffect(() => {
-    if (account) {
-      setIsLoading(true);
-      Promise.all([
-        api.getAgent(account).catch(() => null),
-        api.getLoanTerms(account).catch(() => null)
-      ])
-        .then(([agent, terms]) => {
-          setAgentData(agent);
-          setLoanTerms(terms);
-        })
-        .finally(() => setIsLoading(false));
-    }
-  }, [account]);
+  const agentData = onChainAgent ? {
+    name: onChainAgent[0],
+    agent_type: onChainAgent[1],
+    score: Number(onChainAgent[3]),
+    registered: onChainAgent[4]
+  } : null;
+
+  const borrowedAmount = borrowerPosition ? Number(borrowerPosition[0]) / (10**6) : 0;
 
   // Calculate score-based loan tiers
   const creditScore = agentData?.score || 0;
-  const minCreditScore = 500; // Minimum score to borrow
+  const minCreditScore = 600; // Updated minimum score for zero-collateral
   
-  // Score-based loan tiers
+  // Score-based loan limits (matching smart contract)
   const getMaxLoanByScore = (score: number): number => {
-    if (score < 500) return 5;      // $5 for poor credit
-    if (score < 650) return 50;     // $50 for fair credit  
-    if (score < 750) return 200;    // $200 for good credit
-    return 500;                     // $500 for excellent credit
+    if (score < 600) return 0;
+    if (score < 700) return 50;
+    if (score < 800) return 200;
+    return 500;
   };
   
-  const maxLoanByScore = getMaxLoanByScore(creditScore);
-  const apiMaxLoan = loanTerms?.maxLoan || 0;
-  const maxBorrowable = Math.min(maxLoanByScore, apiMaxLoan);
+  const maxBorrowable = getMaxLoanByScore(creditScore) - borrowedAmount;
   const canBorrow = creditScore >= minCreditScore && maxBorrowable > 0;
   
   // Fixed repayment split at 30% of x402 revenue
   const repaymentSplit = 30;
 
   const handleBorrow = async () => {
-    if (!isConnected) {
+    if (!isConnected || !account) {
       toast.error("Connect your wallet first");
       return;
     }
     if (creditScore < minCreditScore) {
-      toast.error(`Credit score too low. Minimum ${minCreditScore} required to borrow.`);
+      toast.error(`Credit score too low. Minimum ${minCreditScore} required.`);
       return;
     }
     if (!borrowAmount || parseFloat(borrowAmount) <= 0) {
       toast.error("Enter a valid amount");
       return;
     }
-    if (parseFloat(borrowAmount) > maxBorrowable) {
-      toast.error("Amount exceeds available credit");
-      return;
-    }
     
-    setLoading(true);
     try {
-      // Call real API to request loan
-      const result = await api.requestLoan({
-        borrower_address: account!,
-        amount: parseFloat(borrowAmount)
-      });
-      
-      toast.success(`Loan request submitted! Amount: ${borrowAmount} USDT`);
-      setBorrowAmount("");
-      
-      // Refresh loan terms after borrowing
-      const updatedTerms = await api.getLoanTerms(account!);
-      setLoanTerms(updatedTerms);
+      const success = await borrow(borrowAmount);
+      if (success) {
+        toast.success(`On-chain loan successful! Amount: ${borrowAmount} USDT`);
+        setBorrowAmount("");
+        refetchPosition();
+      }
     } catch (error: any) {
-      console.error("Loan request failed:", error);
-      toast.error(error.message || "Failed to request loan");
-    } finally {
-      setLoading(false);
+      console.error("Loan failed:", error);
+      toast.error(error.message || "Blockchain transaction failed");
     }
   };
 
-  if (isLoading) {
+  if (!account) {
     return (
       <div className="space-y-8">
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <h1 className="text-3xl font-bold gradient-text">Borrow</h1>
-          <p className="text-muted-foreground mt-1">Loading your agent data...</p>
-        </motion.div>
-        <div className="flex justify-center py-12">
-          <div className="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-        </div>
+        <h1 className="text-3xl font-bold gradient-text">Borrow</h1>
+        <GlassCard className="text-center py-12">
+          <Wallet className="w-12 h-12 text-primary mx-auto mb-4" />
+          <h3 className="text-xl font-semibold mb-2">Connect Wallet</h3>
+          <p className="text-muted-foreground">Please connect your wallet to view your borrowing capacity.</p>
+        </GlassCard>
       </div>
     );
   }
@@ -227,10 +206,10 @@ export default function Borrow() {
 
           <div className="grid grid-cols-2 gap-4 mb-6">
             {[
-              { label: "Max Borrowable", value: `$${maxBorrowable.toLocaleString()}`, subtext: `Tier: $${maxLoanByScore}`, icon: Zap },
-              { label: "Interest Rate", value: `${(loanTerms?.interestRate || 5).toFixed(1)}%`, subtext: "Variable APY", icon: Shield },
-              { label: "Your Score", value: creditScore, subtext: `Min required: ${minCreditScore}`, icon: Clock },
-              { label: "Agent Type", value: agentData?.passport?.agentType || 'N/A', subtext: agentData?.passport?.kiteIdentityStatus || 'Unverified', icon: AlertTriangle },
+              { label: "Available Credit", value: `${maxBorrowable.toLocaleString()} USDT`, subtext: `Total Limit: ${getMaxLoanByScore(creditScore)}`, icon: Zap },
+              { label: "Current Debt", value: `${borrowedAmount.toLocaleString()} USDT`, subtext: "On-chain liability", icon: CreditCard },
+              { label: "Interest Rate", value: `5.0%`, subtext: "Annual APY", icon: Shield },
+              { label: "Repayment", value: "x402 Auto-Split", subtext: "30% Revenue Share", icon: Zap },
             ].map((item, i) => (
               <div key={item.label} className="bg-muted/30 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-1">
@@ -341,18 +320,18 @@ export default function Borrow() {
 
               <button
                 onClick={handleBorrow}
-                disabled={loading || !borrowAmount || parseFloat(borrowAmount) <= 0}
+                disabled={isPending || !borrowAmount || parseFloat(borrowAmount) <= 0}
                 className="w-full py-3 rounded-lg bg-gradient-to-r from-accent to-primary text-primary-foreground font-semibold text-sm transition-all hover:shadow-lg hover:shadow-accent/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                {loading ? (
+                {isPending ? (
                   <>
                     <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                    Executing...
+                    Confirming Transaction...
                   </>
                 ) : (
                   <>
                     <Wallet className="w-4 h-4" />
-                    Execute Loan
+                    Execute On-Chain Loan
                   </>
                 )}
               </button>

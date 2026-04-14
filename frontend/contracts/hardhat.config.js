@@ -16,6 +16,7 @@ module.exports = {
       url: "https://rpc-testnet.gokite.ai", // Kite AI Testnet RPC
       chainId: 2368,
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      timeout: 60000, // 60 seconds
     },
     localhost: {
       url: "http://127.0.0.1:8545",
