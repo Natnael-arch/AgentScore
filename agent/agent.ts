@@ -26,7 +26,7 @@ const wallet = new ethers.Wallet(AGENT_KEY, provider);
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 const model = genAI.getGenerativeModel({ 
-  model: "gemini-2.5-flash",
+  model: "gemini-flash-latest",
   systemInstruction: "You are a concise summariser. Return exactly 3 sentences."
 });
 
