@@ -1,9 +1,9 @@
 import { ethers } from "ethers";
 import { config } from "../config.js";
 
-// Kite Testnet USDT Settings
-const USDT_ADDRESS = "0x0fF5393387ad2f9f691FD6Fd28e07E3969e27e63";
-const DOMAIN_NAME = "USDT";
+// Kite Testnet PYUSD Settings
+const PYUSD_ADDRESS = "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9";
+const DOMAIN_NAME = "PYUSD";
 const DOMAIN_VERSION = "1";
 
 const GASLESS_API = "https://gasless.gokite.ai/testnet";
@@ -29,14 +29,12 @@ export async function executeGaslessTransfer(toAddress: string, amountUi: number
     const provider = new ethers.JsonRpcProvider(config.kiteRpcUrl);
     const wallet = new ethers.Wallet(config.poolPrivateKey, provider);
 
-    // USDT on Kite Testnet uses 6 decimals
-    const amountInUnits = ethers.parseUnits(amountUi.toFixed(6), 6).toString();
+    // PYUSD on Kite Testnet uses 18 decimals
+    const amountInUnits = ethers.parseUnits(Number(amountUi).toFixed(18), 18).toString();
 
     // The timestamp must be greater than latest block timestamp
-    const latestBlock = await provider.getBlock("latest");
-    const validAfter = latestBlock!.timestamp;
-    // Current gasless API limitation is validBefore must be within 30 seconds of validAfter
-    const validBefore = Math.floor(Date.now() / 1000) + 120; 
+    const validAfter = Math.floor(Date.now() / 1000);
+    const validBefore = validAfter + 30;
 
     const nonce = ethers.hexlify(ethers.randomBytes(32));
 
@@ -44,7 +42,7 @@ export async function executeGaslessTransfer(toAddress: string, amountUi: number
       name: DOMAIN_NAME,
       version: DOMAIN_VERSION,
       chainId: config.kiteChainId,
-      verifyingContract: USDT_ADDRESS,
+      verifyingContract: PYUSD_ADDRESS,
     };
 
     const message = {
@@ -62,13 +60,15 @@ export async function executeGaslessTransfer(toAddress: string, amountUi: number
 
     const payload = {
       ...message,
-      tokenAddress: USDT_ADDRESS,
+      validAfter: message.validAfter.toString(),
+      validBefore: message.validBefore.toString(),
+      tokenAddress: PYUSD_ADDRESS,
       v: sigParams.v,
       r: sigParams.r,
       s: sigParams.s,
     };
 
-    console.log(`Sending gasless transfer for ${amountUi} USDT to ${toAddress}...`);
+    console.log(`Sending gasless transfer for ${amountUi} PYUSD to ${toAddress}...`);
     
     const response = await fetch(GASLESS_API, {
       method: "POST",
@@ -90,4 +90,9 @@ export async function executeGaslessTransfer(toAddress: string, amountUi: number
     console.error("Error executing gasless transfer:", err);
     throw err;
   }
+}
+
+export async function testGasless() {
+  const result = await executeGaslessTransfer("0x55d829A66BB1D9f82923cBDEe355249EE5940365", 0.011);
+  console.log("Gasless test result:", result);
 }

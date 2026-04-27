@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { useWallet } from "@/contexts/WalletContext";
 import { toast } from "sonner";
 import { DollarSign, TrendingUp, Clock, ArrowUpRight, ArrowDownRight, Loader2 } from "lucide-react";
-import { useUSDTBalance, useDepositToLendingPool, useWithdrawFromLendingPool, useLenderPosition } from "@/lib/contracts";
+import { usePYUSDBalance, useDepositToLendingPool, useWithdrawFromLendingPool, useLenderPosition } from "@/lib/contracts";
 import { api } from "@/lib/api";
 import { formatEther, formatUnits } from "viem";
 
@@ -19,7 +19,7 @@ export default function Lend() {
   const [isLoadingData, setIsLoadingData] = useState(true);
 
   // Contract hooks
-  const { data: usdtBalance } = useUSDTBalance(account);
+  const { data: pyusdBalance } = usePYUSDBalance(account);
   const { data: lenderPosition } = useLenderPosition(account);
   const { deposit: contractDeposit, isPending: isDepositPending, isConfirming: isDepositConfirming } = useDepositToLendingPool(account);
   const { withdraw: contractWithdraw, isPending: isWithdrawPending, isConfirming: isWithdrawConfirming } = useWithdrawFromLendingPool(account);
@@ -52,13 +52,13 @@ export default function Lend() {
     fetchLenderData();
   }, [account]);
 
-  const formattedUSDTBalance = usdtBalance ? Number(formatUnits(usdtBalance, 6)).toFixed(2) : '0.00';
+  const formattedPYUSDBalance = pyusdBalance ? Number(formatUnits(pyusdBalance, 18)).toFixed(2) : '0.00';
   // Use API data for deposits, fallback to contract data
-  // USDT has 6 decimals, not 18
+  // PYUSD has 18 decimals
   const depositedAmount = lenderData ? (lenderData.deposited_amount || 0).toFixed(2) : 
-    (lenderPosition ? Number(formatUnits(lenderPosition[0], 6)).toFixed(2) : '0.00');
+    (lenderPosition ? Number(formatUnits(lenderPosition[0], 18)).toFixed(2) : '0.00');
   const earnedInterest = lenderData ? (lenderData.earned_interest || 0).toFixed(2) : 
-    (lenderPosition ? Number(formatUnits(lenderPosition[1], 6)).toFixed(2) : '0.00');
+    (lenderPosition ? Number(formatUnits(lenderPosition[1], 18)).toFixed(2) : '0.00');
 
   const handleSubmit = async () => {
     console.log("Submit triggered", { tab, amount, isConnected, account });
@@ -76,16 +76,16 @@ export default function Lend() {
       return;
     }
     
-    const balanceNum = parseFloat(formattedUSDTBalance);
+    const balanceNum = parseFloat(formattedPYUSDBalance);
     console.log("Balance check:", { amountNum, balanceNum, tab });
     
     if (tab === "deposit") {
       if (amountNum > balanceNum) {
-        toast.error(`Insufficient balance. You have ${balanceNum.toFixed(2)} USDT available.`);
+        toast.error(`Insufficient balance. You have ${balanceNum.toFixed(2)} PYUSD available.`);
         return;
       }
       if (balanceNum <= 0) {
-        toast.error("You have no USDT balance to deposit");
+        toast.error("You have no PYUSD balance to deposit");
         return;
       }
     }
@@ -94,7 +94,7 @@ export default function Lend() {
       const maxWithdraw = parseFloat(depositedAmount) + parseFloat(earnedInterest);
       console.log("Withdraw check:", { amountNum, maxWithdraw, depositedAmount, earnedInterest });
       if (amountNum > maxWithdraw) {
-        toast.error(`Cannot withdraw more than your deposited amount (${maxWithdraw.toFixed(2)} USDT)`);
+        toast.error(`Cannot withdraw more than your deposited amount (${maxWithdraw.toFixed(2)} PYUSD)`);
         return;
       }
       if (maxWithdraw <= 0) {
@@ -138,8 +138,8 @@ export default function Lend() {
   return (
     <div className="space-y-8">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <h1 className="text-3xl font-bold gradient-text">Lend USDT</h1>
-        <p className="text-muted-foreground mt-1">Deposit USDT to earn yield from AI agent borrowers</p>
+        <h1 className="text-3xl font-bold gradient-text">Lend PYUSD</h1>
+        <p className="text-muted-foreground mt-1">Deposit PYUSD to earn yield from AI agent borrowers</p>
       </motion.div>
 
       {/* Position Overview */}
@@ -148,7 +148,7 @@ export default function Lend() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground">Your Deposits</p>
-              <p className="text-2xl font-bold">{`${depositedAmount} USDT`}</p>
+              <p className="text-2xl font-bold">{`${depositedAmount} PYUSD`}</p>
             </div>
             <DollarSign className="w-5 h-5 text-primary" />
           </div>
@@ -157,7 +157,7 @@ export default function Lend() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground">Interest Earned</p>
-              <p className="text-2xl font-bold">{`${earnedInterest} USDT`}</p>
+              <p className="text-2xl font-bold">{`${earnedInterest} PYUSD`}</p>
             </div>
             <TrendingUp className="w-5 h-5 text-primary" />
           </div>
@@ -175,7 +175,7 @@ export default function Lend() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground">Available Balance</p>
-              <p className="text-2xl font-bold">{`${formattedUSDTBalance} USDT`}</p>
+              <p className="text-2xl font-bold">{`${formattedPYUSDBalance} PYUSD`}</p>
             </div>
             <Clock className="w-5 h-5 text-primary" />
           </div>
@@ -207,7 +207,7 @@ export default function Lend() {
 
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-muted-foreground">Amount (USDT)</label>
+              <label className="text-sm text-muted-foreground">Amount (PYUSD)</label>
               <div className="relative mt-1">
                 <input
                   type="number"
@@ -219,7 +219,7 @@ export default function Lend() {
                 <button
                   onClick={() => {
                     if (tab === "deposit") {
-                      setAmount(formattedUSDTBalance);
+                      setAmount(formattedPYUSDBalance);
                     } else {
                       // For withdraw, use deposited amount + earned interest
                       const withdrawable = (parseFloat(depositedAmount) + parseFloat(earnedInterest)).toFixed(2);
@@ -238,7 +238,7 @@ export default function Lend() {
               <input
                 type="range"
                 min="0"
-                max={tab === "deposit" ? parseFloat(formattedUSDTBalance) || 10000 : (parseFloat(depositedAmount) + parseFloat(earnedInterest)) || 10000}
+                max={tab === "deposit" ? parseFloat(formattedPYUSDBalance) || 10000 : (parseFloat(depositedAmount) + parseFloat(earnedInterest)) || 10000}
                 step="100"
                 value={parseFloat(amount) || 0}
                 onChange={(e) => setAmount(e.target.value)}
@@ -248,8 +248,8 @@ export default function Lend() {
                 <span>0</span>
                 <span>
                   {tab === "deposit" 
-                    ? `${parseFloat(formattedUSDTBalance).toLocaleString()} USDT` 
-                    : `${(parseFloat(depositedAmount) + parseFloat(earnedInterest)).toLocaleString()} USDT`}
+                    ? `${parseFloat(formattedPYUSDBalance).toLocaleString()} PYUSD` 
+                    : `${(parseFloat(depositedAmount) + parseFloat(earnedInterest)).toLocaleString()} PYUSD`}
                 </span>
               </div>
             </div>
@@ -257,17 +257,17 @@ export default function Lend() {
             {/* Validation Messages */}
             {amount && parseFloat(amount) > 0 && (
               <div className="space-y-2">
-                {tab === "deposit" && parseFloat(amount) > parseFloat(formattedUSDTBalance) && (
+                {tab === "deposit" && parseFloat(amount) > parseFloat(formattedPYUSDBalance) && (
                   <p className="text-xs text-red-500 flex items-center gap-1">
-                    <span>❌</span> Amount exceeds wallet balance ({parseFloat(formattedUSDTBalance).toFixed(2)} USDT)
+                    <span>❌</span> Amount exceeds wallet balance ({parseFloat(formattedPYUSDBalance).toFixed(2)} PYUSD)
                   </p>
                 )}
                 {tab === "withdraw" && parseFloat(amount) > (parseFloat(depositedAmount) + parseFloat(earnedInterest)) && (
                   <p className="text-xs text-red-500 flex items-center gap-1">
-                    <span>❌</span> Amount exceeds deposited funds ({(parseFloat(depositedAmount) + parseFloat(earnedInterest)).toFixed(2)} USDT)
+                    <span>❌</span> Amount exceeds deposited funds ({(parseFloat(depositedAmount) + parseFloat(earnedInterest)).toFixed(2)} PYUSD)
                   </p>
                 )}
-                {tab === "deposit" && parseFloat(amount) <= parseFloat(formattedUSDTBalance) && (
+                {tab === "deposit" && parseFloat(amount) <= parseFloat(formattedPYUSDBalance) && (
                   <p className="text-xs text-green-500 flex items-center gap-1">
                     <span>✓</span> Valid amount
                   </p>
@@ -305,7 +305,7 @@ export default function Lend() {
               onClick={handleSubmit}
               disabled={(() => {
                 const amt = parseFloat(amount || '0');
-                const bal = parseFloat(formattedUSDTBalance || '0');
+                const bal = parseFloat(formattedPYUSDBalance || '0');
                 const maxWithdraw = parseFloat(depositedAmount || '0') + parseFloat(earnedInterest || '0');
                 if (!amount || amt <= 0) return true;
                 if (tab === 'deposit' && amt > bal) return true;
@@ -320,7 +320,7 @@ export default function Lend() {
                   {(isDepositConfirming || isWithdrawConfirming) ? "Confirming..." : "Processing..."}
                 </span>
               ) : (
-                `${tab === "deposit" ? "Deposit" : "Withdraw"} USDT`
+                `${tab === "deposit" ? "Deposit" : "Withdraw"} PYUSD`
               )}
             </button>
           </div>
@@ -362,7 +362,7 @@ export default function Lend() {
                     </div>
                     <div className="text-right">
                       <p className={`text-sm font-mono ${isIncoming ? "text-primary" : "text-destructive"}`}>
-                        {isIncoming ? "+" : "-"}{formattedAmount} USDT
+                        {isIncoming ? "+" : "-"}{formattedAmount} PYUSD
                       </p>
                       <p className="text-xs text-primary">✓ {tx.status || "confirmed"}</p>
                     </div>

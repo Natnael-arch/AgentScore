@@ -6,14 +6,14 @@ import { DollarSign, Users, TrendingUp, Activity, ArrowRight, Wallet, CheckCircl
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useWallet } from '@/contexts/WalletContext';
-import { useUSDTBalance } from '@/lib/contracts';
+import { usePYUSDBalance } from '@/lib/contracts';
 import { api } from '@/lib/api';
 import { useState, useEffect } from 'react';
 import { formatEther } from 'viem';
 
 export default function Dashboard() {
   const { account, isConnected } = useWallet();
-  const { data: usdtBalance } = useUSDTBalance(account);
+  const { data: usdtBalance } = usePYUSDBalance(account);
   const [poolStats, setPoolStats] = useState<any>(null);
   const [isAgentRegistered, setIsAgentRegistered] = useState(false);
   const [agentData, setAgentData] = useState<any>(null);

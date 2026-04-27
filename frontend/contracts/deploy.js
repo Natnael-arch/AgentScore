@@ -1,88 +1,63 @@
 const { ethers } = require("hardhat");
 
 async function main() {
-  console.log("Starting Blockchain-First Architecture Deployment...");
+  console.log("Starting Integrated Deployment (LendingPool + X402Processor)...");
 
-  // Get the deployer account
   const [deployer] = await ethers.getSigners();
   console.log("Deploying contracts with the account:", deployer.address);
   console.log("Account balance:", (await deployer.getBalance()).toString());
 
-  let usdtAddress = "0x0fF5393387ad2f9f691FD6Fd28e07E3969e27e63"; // Official USDT address on Kite Testnet
-  let usdcAddress = ""; // We can deploy a mock if not found
-
-  // Check if we are on a local network
   const network = await ethers.provider.getNetwork();
   console.log("Connected to network:", network.name, network.chainId);
 
-  if (network.chainId === 31337) {
-    console.log("Local network detected. Deploying mock tokens...");
-    const MockToken = await ethers.getContractFactory("USDT");
-    
-    const usdt = await MockToken.deploy();
-    await usdt.deployed();
-    usdtAddress = usdt.address;
-    console.log("Mock USDT deployed to:", usdtAddress);
+  // ── Existing contracts (already deployed by Nate) ──
+  const AGENT_SCORE_ATTESTATION = "0xF04B3a11db07d206F61Bf08645169793cbD442C3";
+  const PYUSD_ADDRESS = "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9";
 
-    const usdc = await MockToken.deploy();
-    await usdc.deployed();
-    usdcAddress = usdc.address;
-    console.log("Mock USDC deployed to:", usdcAddress);
-  }
+  console.log("\nUsing existing contracts:");
+  console.log("  AgentScoreAttestation:", AGENT_SCORE_ATTESTATION);
+  console.log("  PYUSD Token:", PYUSD_ADDRESS);
 
-  // 1. Deploy AgentRegistry
-  console.log("Deploying AgentRegistry...");
-  const AgentRegistry = await ethers.getContractFactory("AgentRegistry");
-  const agentRegistry = await AgentRegistry.deploy();
-  await agentRegistry.deployed();
-  console.log("AgentRegistry deployed to:", agentRegistry.address);
-
-  // 2. Deploy LendingPool
-  console.log("Deploying LendingPool...");
+  // 1. Deploy LendingPool (passing PYUSD + AgentScoreAttestation)
+  console.log("\nDeploying LendingPool...");
   const LendingPool = await ethers.getContractFactory("LendingPool");
-  const lendingPool = await LendingPool.deploy(usdtAddress, agentRegistry.address);
+  const lendingPool = await LendingPool.deploy(PYUSD_ADDRESS, AGENT_SCORE_ATTESTATION);
   await lendingPool.deployed();
   console.log("LendingPool deployed to:", lendingPool.address);
 
-  // 3. Deploy X402Processor
+  // 2. Deploy X402Processor (passing LendingPool address)
   console.log("Deploying X402Processor...");
   const X402Processor = await ethers.getContractFactory("X402Processor");
   const x402Processor = await X402Processor.deploy(lendingPool.address);
   await x402Processor.deployed();
   console.log("X402Processor deployed to:", x402Processor.address);
 
-  // 4. Configure Inter-contract settings
-  console.log("Configuring contracts...");
+  // 3. Configure inter-contract settings
+  console.log("\nConfiguring contracts...");
   await lendingPool.setX402Processor(x402Processor.address);
   console.log("✓ X402Processor set in LendingPool");
 
-  // Auth the deployer as a scorer for testing purposes
-  await agentRegistry.authorizeScorer(deployer.address, true);
-  console.log("✓ Deployer authorized as scorer in AgentRegistry");
-
   console.log("\nDeployment Summary:");
   console.log("==================");
-  console.log("AgentRegistry:", agentRegistry.address);
+  console.log("AgentScoreAttestation (existing):", AGENT_SCORE_ATTESTATION);
   console.log("LendingPool:", lendingPool.address);
   console.log("X402Processor:", x402Processor.address);
-  console.log("USDT Address:", usdtAddress);
-  console.log("USDC Address:", usdcAddress);
-  
-  // Save addresses to a file for easy access
+  console.log("PYUSD Token:", PYUSD_ADDRESS);
+
+  // Save addresses
   const fs = require("fs");
   const addresses = {
-    agentRegistry: agentRegistry.address,
+    agentScoreAttestation: AGENT_SCORE_ATTESTATION,
     lendingPool: lendingPool.address,
     x402Processor: x402Processor.address,
-    usdt: usdtAddress,
-    usdc: usdcAddress,
+    pyusd: PYUSD_ADDRESS,
     deployer: deployer.address,
     network: network.chainId === 2368 ? "kite-testnet" : "local-hardhat",
     chainId: network.chainId
   };
-  
+
   fs.writeFileSync("deployed-addresses.json", JSON.stringify(addresses, null, 2));
-  console.log("\nAddresses saved to deployed-addresses.json");
+  console.log("\n✅ Addresses saved to deployed-addresses.json");
 }
 
 main()
@@ -91,4 +66,3 @@ main()
     console.error(error);
     process.exit(1);
   });
-

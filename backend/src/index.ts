@@ -1,3 +1,5 @@
+import dns from "node:dns";
+dns.setDefaultResultOrder('ipv4first');
 import express from "express";
 import cors from "cors";
 import { config } from "./config.js";

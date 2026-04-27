@@ -18,13 +18,13 @@ export default function Borrow() {
   const { borrow, isPending } = useBorrowFromLendingPool(account);
 
   const agentData = onChainAgent ? {
-    name: onChainAgent[0],
-    agent_type: onChainAgent[1],
-    score: Number(onChainAgent[3]),
-    registered: onChainAgent[4]
+    name: "AI Agent", // Name not stored on-chain in ScoreAttestation
+    agent_type: "Autonomous", // Type not stored on-chain
+    score: Number(onChainAgent.score),
+    registered: true
   } : null;
 
-  const borrowedAmount = borrowerPosition ? Number(borrowerPosition[0]) / (10**6) : 0;
+  const borrowedAmount = borrowerPosition ? Number(borrowerPosition[0]) / (10**18) : 0;
 
   // Calculate score-based loan tiers
   const creditScore = agentData?.score || 0;
@@ -61,7 +61,7 @@ export default function Borrow() {
     try {
       const success = await borrow(borrowAmount);
       if (success) {
-        toast.success(`On-chain loan successful! Amount: ${borrowAmount} USDT`);
+        toast.success(`On-chain loan successful! Amount: ${borrowAmount} PYUSD`);
         setBorrowAmount("");
         refetchPosition();
       }
@@ -206,8 +206,8 @@ export default function Borrow() {
 
           <div className="grid grid-cols-2 gap-4 mb-6">
             {[
-              { label: "Available Credit", value: `${maxBorrowable.toLocaleString()} USDT`, subtext: `Total Limit: ${getMaxLoanByScore(creditScore)}`, icon: Zap },
-              { label: "Current Debt", value: `${borrowedAmount.toLocaleString()} USDT`, subtext: "On-chain liability", icon: CreditCard },
+              { label: "Available Credit", value: `${maxBorrowable.toLocaleString()} PYUSD`, subtext: `Total Limit: ${getMaxLoanByScore(creditScore)}`, icon: Zap },
+              { label: "Current Debt", value: `${borrowedAmount.toLocaleString()} PYUSD`, subtext: "On-chain liability", icon: CreditCard },
               { label: "Interest Rate", value: `5.0%`, subtext: "Annual APY", icon: Shield },
               { label: "Repayment", value: "x402 Auto-Split", subtext: "30% Revenue Share", icon: Zap },
             ].map((item, i) => (
@@ -272,7 +272,7 @@ export default function Borrow() {
           ) : (
             <div className="space-y-4">
               <div>
-                <label className="text-sm text-muted-foreground">Borrow Amount (USDT)</label>
+                <label className="text-sm text-muted-foreground">Borrow Amount (PYUSD)</label>
                 <input
                   type="number"
                   value={borrowAmount}
@@ -294,7 +294,7 @@ export default function Borrow() {
               />
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>0</span>
-                <span>Max: {maxBorrowable.toLocaleString()} USDT</span>
+                <span>Max: {maxBorrowable.toLocaleString()} PYUSD</span>
               </div>
 
               {borrowAmount && parseFloat(borrowAmount) > 0 && (
@@ -345,9 +345,9 @@ export default function Borrow() {
         <h3 className="text-lg font-semibold mb-4">Loan History</h3>
         <div className="space-y-3">
           {[
-            { id: "#1042", amount: "1,200 USDT", rate: "5.2%", status: "Active", date: "Mar 15, 2024" },
-            { id: "#1038", amount: "800 USDT", rate: "4.8%", status: "Repaid", date: "Feb 20, 2024" },
-            { id: "#1025", amount: "2,000 USDT", rate: "5.5%", status: "Repaid", date: "Jan 10, 2024" },
+            { id: "#1042", amount: "1,200 PYUSD", rate: "5.2%", status: "Active", date: "Mar 15, 2024" },
+            { id: "#1038", amount: "800 PYUSD", rate: "4.8%", status: "Repaid", date: "Feb 20, 2024" },
+            { id: "#1025", amount: "2,000 PYUSD", rate: "5.5%", status: "Repaid", date: "Jan 10, 2024" },
           ].map((loan, i) => (
             <motion.div
               key={loan.id}

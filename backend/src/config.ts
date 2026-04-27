@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 dotenv.config();
 
 export const config = {
-  port: parseInt(process.env.PORT || "3001"),
+  port: parseInt(process.env.PORT || "3002"),
   supabaseUrl: process.env.SUPABASE_URL || "",
   supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
   kiteRpcUrl: process.env.KITE_RPC_URL || "https://rpc-testnet.gokite.ai",

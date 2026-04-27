@@ -129,73 +129,55 @@ agentsRouter.get("/:address/transactions", async (req, res) => {
   }
 });
 
-agentsRouter.post("/:address/sync-score", async (req, res) => {
+agentsRouter.post("/sync-score", async (req, res) => {
+  const { agentAddress } = req.body;
+
+  if (!agentAddress) {
+    return res.status(400).json({ error: "agentAddress required" });
+  }
+
   try {
-    const { address } = req.params;
-    const { score } = req.body;
-    const apiKey = req.header("x-api-key");
-
-    const { config } = await import("../config.js");
-    const { ethers } = await import("ethers");
-    const fs = await import("fs");
-    const path = await import("path");
-    const AgentRegistryABI = await import("../../../frontend/contracts/artifacts/contracts/AgentRegistry.sol/AgentRegistry.json", {
-      assert: { type: "json" }
+    // Read the real score from Nate's oracle (which reads AgentScoreAttestation.sol)
+    const oracleUrl = process.env.ORACLE_API_URL || "https://agentscore.onrender.com";
+    
+    // Use native https to bypass Node 18 Fetch DNS issues
+    const https = await import("https");
+    const scoreData: any = await new Promise((resolve, reject) => {
+      https.get(`${oracleUrl}/score/${agentAddress}/raw`, (res) => {
+        let body = "";
+        res.on("data", (chunk) => body += chunk);
+        res.on("end", () => {
+          if (res.statusCode !== 200) reject(new Error(`Oracle returned ${res.statusCode}`));
+          else resolve(JSON.parse(body));
+        });
+      }).on("error", reject);
     });
 
-    if (apiKey !== config.systemApiKey) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+    // Update Supabase cache with the real on-chain score
+    const { error } = await supabase
+      .from("agents")
+      .upsert({
+        address:        agentAddress.toLowerCase(),
+        score:          scoreData.score,
+        payment_rate:   scoreData.paymentRate,
+        diversity:      scoreData.diversity,
+        tx_count:       scoreData.txCount,
+        age_days:       scoreData.agentAgeDays,
+        last_synced_at: new Date().toISOString()
+      }, { onConflict: "address" }).catch((e: any) => ({ error: e }));
 
-    if (typeof score !== "number" || score < 300 || score > 850) {
-      return res.status(400).json({ error: "Score must be a number between 300 and 850" });
-    }
+    if (error) console.error("Supabase offline, skipping write");
 
-    // PUSH TO BLOCKCHAIN
-    console.log(`🔗 Signaling score update on-chain for ${address} -> ${score}...`);
-    
-    const provider = new ethers.JsonRpcProvider(config.kiteRpcUrl);
-    const wallet = new ethers.Wallet(config.poolPrivateKey as string, provider);
-    
-    const addressPath = path.resolve(process.cwd(), "../frontend/contracts/deployed-addresses.json");
-    if (!fs.existsSync(addressPath)) {
-      throw new Error("deployed-addresses.json not found. Deploy contracts first.");
-    }
-    const addresses = JSON.parse(fs.readFileSync(addressPath, "utf8"));
-    
-    const agentRegistry = new ethers.Contract(addresses.agentRegistry, AgentRegistryABI.default.abi, wallet);
-    
-    // Check if agent is registered on-chain
-    const onChainAgent = await agentRegistry.getAgent(address);
-    if (!onChainAgent.registered) {
-      console.log(`📡 Agent ${address} not registered on-chain. Registering now...`);
-      
-      // Get metadata from Supabase to push to blockchain
-      const { data: dbAgent } = await supabase.from("agents").select("*").eq("address", address).single();
-      
-      const regTx = await agentRegistry.adminRegister(
-        address,
-        dbAgent?.name || "Unknown Agent",
-        dbAgent?.agent_type || "General Purpose",
-        dbAgent?.model_hash || "0x00"
-      );
-      await regTx.wait();
-      console.log(`✓ Agent registered on-chain: ${regTx.hash}`);
-    }
-
-    const tx = await agentRegistry.updateScore(address, score);
-    console.log(`✓ On-chain score update transaction sent: ${tx.hash}`);
-    await tx.wait();
-
-    res.json({ 
-      message: "Score sync transaction sent to blockchain", 
-      txHash: tx.hash,
-      score 
+    res.json({
+      success:    true,
+      address:    agentAddress,
+      score:      scoreData.score,
+      source:     "AgentScoreAttestation on Kite chain",
+      contract:   "0xF04B3a11db07d206F61Bf08645169793cbD442C3",
+      explorerUrl: `https://testnet.kitescan.ai/address/0xF04B3a11db07d206F61Bf08645169793cbD442C3`
     });
-  } catch (err: any) {
-    console.error("POST /agents/:address/sync-score error:", err);
-    res.status(500).json({ error: "Internal server error", message: err.message });
+
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
   }
 });
-
-

@@ -1,9 +1,8 @@
-import { parseEther, formatEther } from 'viem';
-import { useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi';
-import { kiteTestnet, USDT_ADDRESS, LENDING_POOL_ADDRESS, AGENT_REGISTRY_ADDRESS, X402_PROCESSOR_ADDRESS } from './web3-config';
-
-// USDT Contract ABI (minimal)
-export const USDT_ABI = [
+import { kiteTestnet, PYUSD_ADDRESS, LENDING_POOL_ADDRESS, AGENT_REGISTRY_ADDRESS, X402_PROCESSOR_ADDRESS } from './web3-config';
+import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { parseEther } from 'viem';
+// PYUSD Contract ABI (minimal)
+export const PYUSD_ABI = [
   {
     inputs: [
       { internalType: 'string', name: 'name', type: 'string' },
@@ -102,21 +101,21 @@ export const LENDING_POOL_ABI = [
   },
 ] as const;
 
-export const AGENT_REGISTRY_ABI = [
+export const AGENT_SCORE_ABI = [
   {
-    inputs: [{ internalType: 'address', name: '_agentAddress', type: 'address' }],
-    name: 'getAgent',
+    inputs: [{ internalType: 'address', name: 'agent', type: 'address' }],
+    name: 'getFullRecord',
     outputs: [
       {
         components: [
-          { internalType: 'string', name: 'name', type: 'string' },
-          { internalType: 'string', name: 'agentType', type: 'string' },
-          { internalType: 'string', name: 'modelHash', type: 'string' },
-          { internalType: 'uint256', name: 'score', type: 'uint256' },
-          { internalType: 'bool', name: 'registered', type: 'bool' },
-          { internalType: 'uint256', name: 'lastUpdated', type: 'uint256' },
+          { internalType: 'uint16', name: 'score', type: 'uint16' },
+          { internalType: 'uint32', name: 'timestamp', type: 'uint32' },
+          { internalType: 'uint8', name: 'paymentRate', type: 'uint8' },
+          { internalType: 'uint8', name: 'diversity', type: 'uint8' },
+          { internalType: 'uint32', name: 'txCount', type: 'uint32' },
+          { internalType: 'uint16', name: 'agentAgeDays', type: 'uint16' },
         ],
-        internalType: 'struct AgentRegistry.Agent',
+        internalType: 'struct AgentScoreAttestation.ScoreRecord',
         name: '',
         type: 'tuple',
       },
@@ -125,39 +124,31 @@ export const AGENT_REGISTRY_ABI = [
     type: 'function',
   },
   {
-    inputs: [{ internalType: 'address', name: '_agentAddress', type: 'address' }],
+    inputs: [{ internalType: 'address', name: 'agent', type: 'address' }],
     name: 'getScore',
-    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  {
-    inputs: [
-      { internalType: 'string', name: '_name', type: 'string' },
-      { internalType: 'string', name: '_agentType', type: 'string' },
-      { internalType: 'string', name: '_modelHash', type: 'string' },
+    outputs: [
+      { internalType: 'uint16', name: 'score', type: 'uint16' },
+      { internalType: 'uint32', name: 'timestamp', type: 'uint32' },
     ],
-    name: 'registerAgent',
-    outputs: [],
-    stateMutability: 'nonpayable',
+    stateMutability: 'view',
     type: 'function',
   },
 ] as const;
 
-export const useUSDTBalance = (address: string | undefined) => {
+export const usePYUSDBalance = (address: string | undefined) => {
   return useReadContract({
-    address: USDT_ADDRESS,
-    abi: USDT_ABI,
+    address: PYUSD_ADDRESS,
+    abi: PYUSD_ABI,
     functionName: 'balanceOf',
     args: address ? [address as `0x${string}`] : undefined,
     chainId: kiteTestnet.id,
   });
 };
 
-export const useUSDTDecimals = () => {
+export const usePYUSDDecimals = () => {
   return useReadContract({
-    address: USDT_ADDRESS,
-    abi: USDT_ABI,
+    address: PYUSD_ADDRESS,
+    abi: PYUSD_ABI,
     functionName: 'decimals',
     chainId: kiteTestnet.id,
   });
@@ -172,19 +163,15 @@ export const useDepositToLendingPool = (account?: string) => {
 
   const deposit = async (amount: string): Promise<boolean> => {
     try {
-      // USDT has 6 decimals on Kite Testnet
-      const decimals = 6;
-      
-      // Convert amount to wei format
+      // PYUSD has 18 decimals on Kite Testnet
       const amountInWei = parseEther(amount);
-      const adjustedAmount = (amountInWei * BigInt(10 ** decimals)) / BigInt(10 ** 18);
       
-      // Approve USDT spending
+      // Approve PYUSD spending
       const approveHash = await writeContractAsync({
-        address: USDT_ADDRESS,
-        abi: USDT_ABI,
+        address: PYUSD_ADDRESS,
+        abi: PYUSD_ABI,
         functionName: 'approve',
-        args: [LENDING_POOL_ADDRESS, BigInt(adjustedAmount)],
+        args: [LENDING_POOL_ADDRESS, amountInWei],
         chain: kiteTestnet,
         account: account as `0x${string}`,
       });
@@ -196,7 +183,7 @@ export const useDepositToLendingPool = (account?: string) => {
         address: LENDING_POOL_ADDRESS,
         abi: LENDING_POOL_ABI,
         functionName: 'deposit',
-        args: [BigInt(adjustedAmount)],
+        args: [amountInWei],
         chain: kiteTestnet,
         account: account as `0x${string}`,
       });
@@ -225,16 +212,12 @@ export const useWithdrawFromLendingPool = (account?: string) => {
 
   const withdraw = async (amount: string): Promise<boolean> => {
     try {
-      // USDT has 6 decimals on Kite Testnet
-      const decimals = 6;
       const amountInWei = parseEther(amount);
-      const adjustedAmount = (amountInWei * BigInt(10 ** decimals)) / BigInt(10 ** 18);
-      
       const withdrawHash = await writeContractAsync({
         address: LENDING_POOL_ADDRESS,
         abi: LENDING_POOL_ABI,
         functionName: 'withdraw',
-        args: [BigInt(adjustedAmount)],
+        args: [amountInWei],
         chain: kiteTestnet,
         account: account as `0x${string}`,
       });
@@ -267,37 +250,20 @@ export const useLenderPosition = (address: string | undefined) => {
 export const useAgentOnChainData = (address: string | undefined) => {
   return useReadContract({
     address: AGENT_REGISTRY_ADDRESS,
-    abi: AGENT_REGISTRY_ABI,
-    functionName: 'getAgent',
+    abi: AGENT_SCORE_ABI,
+    functionName: 'getFullRecord',
     args: address ? [address as `0x${string}`] : undefined,
     chainId: kiteTestnet.id,
   });
 };
 
 export const useRegisterAgentOnChain = () => {
-  const { writeContractAsync, isPending, data: hash } = useWriteContract();
-  
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
-    hash,
-  });
-
-  const register = async (name: string, type: string, hashStr: string): Promise<boolean> => {
-    try {
-      const txHash = await writeContractAsync({
-        address: AGENT_REGISTRY_ADDRESS,
-        abi: AGENT_REGISTRY_ABI,
-        functionName: 'registerAgent',
-        args: [name, type, hashStr],
-        chain: kiteTestnet,
-      });
-      return !!txHash;
-    } catch (error) {
-      console.error('On-chain registration failed:', error);
-      throw error;
-    }
+  return { 
+    register: async () => { console.warn("Registry replaced by automated attestation"); return false; }, 
+    isPending: false, 
+    isConfirming: false, 
+    isConfirmed: false 
   };
-
-  return { register, isPending, isConfirming, isConfirmed };
 };
 
 export const useBorrowFromLendingPool = (account?: string) => {
@@ -309,16 +275,14 @@ export const useBorrowFromLendingPool = (account?: string) => {
 
   const borrow = async (amount: string): Promise<boolean> => {
     try {
-      // USDT has 6 decimals on Kite Testnet
-      const decimals = 6;
+      // PYUSD has 18 decimals on Kite Testnet
       const amountInWei = parseEther(amount);
-      const adjustedAmount = (amountInWei * BigInt(10 ** decimals)) / BigInt(10 ** 18);
       
       const borrowHash = await writeContractAsync({
         address: LENDING_POOL_ADDRESS,
         abi: LENDING_POOL_ABI,
         functionName: 'borrow',
-        args: [BigInt(adjustedAmount)],
+        args: [amountInWei],
         chain: kiteTestnet,
         account: account as `0x${string}`,
       });

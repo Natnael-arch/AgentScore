@@ -1,10 +1,9 @@
 {
-  "agentRegistry": "0xb2B3c4C9C175d45222c588c439606a82a5fb166F",
-  "lendingPool": "0xFb091913c2333338b3d455D8A2EeEFA7EE4dDA6f",
-  "x402Processor": "0x484Fd4BFD92f2b9bfFB1eC6cd957bf7FeC724F9C",
-  "usdt": "0x0fF5393387ad2f9f691FD6Fd28e07E3969e27e63",
-  "usdc": "",
-  "deployer": "0xA5Db1B562f40A7F4B474cC8f2311E4fAFe2f330E",
+  "agentScoreAttestation": "0xF04B3a11db07d206F61Bf08645169793cbD442C3",
+  "lendingPool": "0x69D18dD439740f13586F90bD87c1eF44Aa0C2ACB",
+  "x402Processor": "0x18b5B8f29895Ba3Ec754aeBfa0527C0D3aa70211",
+  "pyusd": "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9",
+  "deployer": "0x55d829A66BB1D9f82923cBDEe355249EE5940365",
   "network": "kite-testnet",
   "chainId": 2368
 }

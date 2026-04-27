@@ -1,5 +1,7 @@
 import { ethers } from "ethers";
 import * as dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
 
 dotenv.config();
 
@@ -82,6 +84,31 @@ export async function computeScore(agentAddress: string): Promise<ScoreResult> {
     } catch (blockError) {
       console.error(`    ❌ Error fetching block ${b}:`, blockError);
     }
+  }
+
+  // 3. Scan for Repaid events to boost score for debt repayment
+  try {
+    const addressPath = path.resolve(process.cwd(), "../frontend/contracts/deployed-addresses.json");
+    if (fs.existsSync(addressPath)) {
+      const addresses = JSON.parse(fs.readFileSync(addressPath, "utf8"));
+      if (addresses.lendingPool) {
+        const lendingPoolAbi = ["event Repaid(address indexed borrower, uint256 amount)"];
+        const lendingPool = new ethers.Contract(addresses.lendingPool, lendingPoolAbi, provider);
+        
+        console.log(`  Scanning LendingPool for Repaid events...`);
+        const repaidLogs = await lendingPool.queryFilter("Repaid", startBlock, latestBlock);
+        
+        for (const log of repaidLogs) {
+          const [borrower] = (log as any).args;
+          if (borrower.toLowerCase() === agentAddress.toLowerCase()) {
+            successCount += 3; // Heavily weight repayments as successful sessions
+            uniquePayees.add(addresses.lendingPool.toLowerCase());
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error("    ❌ Error fetching Repaid logs:", e);
   }
 
   // 5. Derive metrics

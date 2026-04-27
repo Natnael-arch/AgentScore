@@ -1,8 +1,8 @@
 import { ethers } from "ethers";
 import { config, supabase } from "../config.js";
-import AgentRegistryABI from "../../../frontend/contracts/artifacts/contracts/AgentRegistry.sol/AgentRegistry.json" assert { type: "json" };
-import X402ProcessorABI from "../../../frontend/contracts/artifacts/contracts/X402Processor.sol/X402Processor.json" assert { type: "json" };
-import LendingPoolABI from "../../../frontend/contracts/artifacts/contracts/LendingPool.sol/LendingPool.json" assert { type: "json" };
+import AgentScoreAttestationABI from "../../../contracts/artifacts/contracts/AgentScoreAttestation.sol/AgentScoreAttestation.json" with { type: "json" };
+import X402ProcessorABI from "../../../frontend/contracts/artifacts/contracts/X402Processor.sol/X402Processor.json" with { type: "json" };
+import LendingPoolABI from "../../../frontend/contracts/artifacts/contracts/LendingPool.sol/LendingPool.json" with { type: "json" };
 import fs from "fs";
 import path from "path";
 
@@ -20,7 +20,7 @@ export async function startIndexer() {
 
   const addresses = JSON.parse(fs.readFileSync(addressPath, "utf8"));
 
-  const agentRegistry = new ethers.Contract(addresses.agentRegistry, AgentRegistryABI.abi, provider);
+  const agentScoreAttestation = new ethers.Contract(addresses.agentScoreAttestation, AgentScoreAttestationABI.abi, provider);
   const x402Processor = new ethers.Contract(addresses.x402Processor, X402ProcessorABI.abi, provider);
   const lendingPool = new ethers.Contract(addresses.lendingPool, LendingPoolABI.abi, provider);
 
@@ -37,37 +37,28 @@ export async function startIndexer() {
       const fromBlock = lastProcessedBlock + 1;
       const toBlock = currentBlock;
 
-      // 1. Scan for AgentRegistered
-      const regLogs = await agentRegistry.queryFilter("AgentRegistered", fromBlock, toBlock);
-      for (const log of regLogs) {
-        const [agentAddress, name, agentType] = (log as any).args;
-        console.log(`🔗 Indexer: AgentRegistered [${agentAddress}] - ${name}`);
+      // 1. Scan for ScoreAttested (Replaces Registration and ScoreUpdated)
+      const scoreLogs = await agentScoreAttestation.queryFilter("ScoreAttested", fromBlock, toBlock);
+      for (const log of scoreLogs) {
+        const [agentAddress, newScore, timestamp] = (log as any).args;
+        console.log(`🔗 Indexer: ScoreAttested [${agentAddress}] -> ${newScore}`);
+        
+        // Upsert agent to ensure they exist and update score
         await supabase.from("agents").upsert({
           address: agentAddress,
-          name,
-          agent_type: agentType,
-          identity_status: "Verified",
-          registered_at: new Date().toISOString()
-        });
-      }
-
-      // 2. Scan for ScoreUpdated
-      const scoreLogs = await agentRegistry.queryFilter("ScoreUpdated", fromBlock, toBlock);
-      for (const log of scoreLogs) {
-        const [agentAddress, newScore] = (log as any).args;
-        console.log(`🔗 Indexer: ScoreUpdated [${agentAddress}] -> ${newScore}`);
-        await supabase.from("agents").update({
           score: Number(newScore),
-          updated_at: new Date().toISOString()
-        }).eq("address", agentAddress);
+          name: "Autonomous Agent",
+          identity_status: "Verified",
+          updated_at: new Date(Number(timestamp) * 1000).toISOString()
+        });
       }
 
       // 3. Scan for Borrowed (LendingPool)
       const borrowLogs = await lendingPool.queryFilter("Borrowed", fromBlock, toBlock);
       for (const log of borrowLogs) {
         const [borrowerAddress, amount] = (log as any).args;
-        const amountUi = parseFloat(ethers.formatUnits(amount, 6));
-        console.log(`🔗 Indexer: Borrowed [${borrowerAddress}] -> ${amountUi} USDT`);
+        const amountUi = parseFloat(ethers.formatUnits(amount, 18));
+        console.log(`🔗 Indexer: Borrowed [${borrowerAddress}] -> ${amountUi} PYUSD`);
         
         // Record in Supabase
         const interestRate = 5.0; // Matching contract
@@ -96,14 +87,14 @@ export async function startIndexer() {
       const payLogs = await x402Processor.queryFilter("PaymentSplit", fromBlock, toBlock);
       for (const log of payLogs) {
         const [from, to, token, totalAmount, agentPortion, poolPortion] = (log as any).args;
-        console.log(`🔗 Indexer: PaymentSplit [${from} -> ${to}] Total: ${ethers.formatUnits(totalAmount, 6)}`);
+        console.log(`🔗 Indexer: PaymentSplit [${from} -> ${to}] Total: ${ethers.formatUnits(totalAmount, 18)}`);
         
         await supabase.from("transactions").insert({
           from_address: from,
           to_address: to,
-          amount: parseFloat(ethers.formatUnits(totalAmount, 6)),
-          repayment_portion: parseFloat(ethers.formatUnits(poolPortion, 6)),
-          agent_portion: parseFloat(ethers.formatUnits(agentPortion, 6)),
+          amount: parseFloat(ethers.formatUnits(totalAmount, 18)),
+          repayment_portion: parseFloat(ethers.formatUnits(poolPortion, 18)),
+          agent_portion: parseFloat(ethers.formatUnits(agentPortion, 18)),
           tx_hash: log.transactionHash,
           status: "success",
           service_name: "x402 On-Chain Split"
@@ -118,7 +109,7 @@ export async function startIndexer() {
           .single();
 
         if (activeLoan) {
-          const repaymentAmount = parseFloat(ethers.formatUnits(poolPortion, 6));
+          const repaymentAmount = parseFloat(ethers.formatUnits(poolPortion, 18));
           const newTotalRepaid = parseFloat(activeLoan.total_repaid) + repaymentAmount;
           
           await supabase.from("loan_repayments").insert({
@@ -135,6 +126,13 @@ export async function startIndexer() {
           }
 
           await supabase.from("loans").update(updateData).eq("id", activeLoan.id);
+
+          // Trigger asynchronous score sync to immediately reflect the repayment
+          fetch(`http://localhost:${config.port}/api/agents/sync-score`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agentAddress: to })
+          }).catch(e => console.error("Failed to trigger sync-score:", e));
         }
       }
 

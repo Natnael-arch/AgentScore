@@ -5,6 +5,10 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
+interface ILendingPool {
+    function repay(address borrower, uint256 amount) external;
+}
+
 contract X402Processor is Ownable, ReentrancyGuard {
     address public lendingPool;
     uint256 public constant REPAYMENT_PERCENTAGE = 30;
@@ -43,10 +47,16 @@ contract X402Processor is Ownable, ReentrancyGuard {
 
         IERC20 token = IERC20(_token);
 
-        // Transfer pool portion to LendingPool
-        require(token.transferFrom(msg.sender, lendingPool, poolPortion), "Pool transfer failed");
+        // Transfer pool portion to X402Processor first
+        require(token.transferFrom(msg.sender, address(this), poolPortion), "Pool transfer failed");
         
-        // Transfer agent portion to the agent's wallet
+        // Approve LendingPool to take the pool portion
+        token.approve(lendingPool, poolPortion);
+        
+        // Call repay on LendingPool to actually reduce the agent's debt
+        ILendingPool(lendingPool).repay(_targetAgent, poolPortion);
+        
+        // Transfer agent portion to the agent's wallet directly
         require(token.transferFrom(msg.sender, _targetAgent, agentPortion), "Agent transfer failed");
 
         emit PaymentSplit(msg.sender, _targetAgent, _token, _amount, agentPortion, poolPortion);

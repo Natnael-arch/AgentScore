@@ -5,14 +5,13 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-interface IAgentRegistry {
-    function getScore(address agent) external view returns (uint256);
-    function updateScore(address agent, uint256 newScore) external;
+interface IAgentScoreAttestation {
+    function getScore(address agent) external view returns (uint16 score, uint32 timestamp);
 }
 
 contract LendingPool is Ownable, ReentrancyGuard {
-    IERC20 public usdtToken;
-    IAgentRegistry public agentRegistry;
+    IERC20 public pyusdToken;
+    IAgentScoreAttestation public scoreOracle;
     address public x402Processor;
     
     struct Lender {
@@ -46,9 +45,9 @@ contract LendingPool is Ownable, ReentrancyGuard {
     event CollateralAdded(address indexed borrower, uint256 amount);
     event InterestPaid(address indexed lender, uint256 amount);
     
-    constructor(address _usdtToken, address _agentRegistry) {
-        usdtToken = IERC20(_usdtToken);
-        agentRegistry = IAgentRegistry(_agentRegistry);
+    constructor(address _pyusdToken, address _scoreOracle) {
+        pyusdToken = IERC20(_pyusdToken);
+        scoreOracle = IAgentScoreAttestation(_scoreOracle);
     }
 
     function setX402Processor(address _processor) external onlyOwner {
@@ -58,8 +57,8 @@ contract LendingPool is Ownable, ReentrancyGuard {
     function deposit(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be greater than 0");
         
-        // Transfer USDT from lender to this contract
-        require(usdtToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        // Transfer PYUSD from lender to this contract
+        require(pyusdToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
         
         // Update lender state
         if (lenders[msg.sender].depositedAmount == 0) {
@@ -100,8 +99,8 @@ contract LendingPool is Ownable, ReentrancyGuard {
         lender.lastDepositTime = block.timestamp;
         totalDeposits -= withdrawFromDeposit;
         
-        // Transfer USDT to lender
-        require(usdtToken.transfer(msg.sender, amount), "Transfer failed");
+        // Transfer PYUSD to lender
+        require(pyusdToken.transfer(msg.sender, amount), "Transfer failed");
         
         emit Withdrawn(msg.sender, amount);
     }
@@ -115,15 +114,16 @@ contract LendingPool is Ownable, ReentrancyGuard {
     function borrow(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be greater than 0");
         
-        uint256 score = agentRegistry.getScore(msg.sender);
+        (uint16 rawScore, ) = scoreOracle.getScore(msg.sender);
+        uint256 score = uint256(rawScore);
         uint256 maxBorrowable = 0;
         
         if (score >= 800) {
-            maxBorrowable = 500 * (10**6); // USDT uses 6 decimals
+            maxBorrowable = 500 * (10**18); // PYUSD uses 18 decimals
         } else if (score >= 700) {
-            maxBorrowable = 200 * (10**6);
+            maxBorrowable = 200 * (10**18);
         } else if (score >= 600) {
-            maxBorrowable = 50 * (10**6);
+            maxBorrowable = 50 * (10**18);
         }
         
         require(maxBorrowable > 0, "Credit score too low to borrow");
@@ -140,7 +140,7 @@ contract LendingPool is Ownable, ReentrancyGuard {
         borrower.lastBorrowTime = block.timestamp;
         totalBorrowed += amount;
         
-        require(usdtToken.transfer(msg.sender, amount), "Transfer failed");
+        require(pyusdToken.transfer(msg.sender, amount), "Transfer failed");
         
         emit Borrowed(msg.sender, amount);
     }
@@ -161,8 +161,8 @@ contract LendingPool is Ownable, ReentrancyGuard {
             borrower.isCollateralLocked = false;
         }
         
-        // Transfer USDT from caller to this contract
-        require(usdtToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        // Transfer PYUSD from caller to this contract
+        require(pyusdToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
         
         emit Repaid(_borrower, amount);
     }
@@ -170,7 +170,7 @@ contract LendingPool is Ownable, ReentrancyGuard {
     function addCollateral(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be greater than 0");
         
-        require(usdtToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        require(pyusdToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
         
         Borrower storage borrower = borrowers[msg.sender];
         borrower.collateralAmount += amount;
@@ -218,7 +218,7 @@ contract LendingPool is Ownable, ReentrancyGuard {
     }
     
     function emergencyWithdraw() external onlyOwner {
-        uint256 balance = usdtToken.balanceOf(address(this));
-        require(usdtToken.transfer(owner(), balance), "Transfer failed");
+        uint256 balance = pyusdToken.balanceOf(address(this));
+        require(pyusdToken.transfer(owner(), balance), "Transfer failed");
     }
 }
