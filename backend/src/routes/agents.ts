@@ -52,6 +52,7 @@ agentsRouter.get("/:address", async (req, res) => {
       x402Reliability: reliability,
       failedPayments: data.failed_payments,
       totalPayments: data.total_payments,
+      passportVerified: data.passport_verified || false,
       passport: {
         agentType: data.agent_type,
         modelHash: data.model_hash || "0x0000...0000",
@@ -153,20 +154,47 @@ agentsRouter.post("/sync-score", async (req, res) => {
       }).on("error", reject);
     });
 
-    // Update Supabase cache with the real on-chain score
-    const { error } = await supabase
-      .from("agents")
-      .upsert({
-        address:        agentAddress.toLowerCase(),
-        score:          scoreData.score,
-        payment_rate:   scoreData.paymentRate,
-        diversity:      scoreData.diversity,
-        tx_count:       scoreData.txCount,
-        age_days:       scoreData.agentAgeDays,
-        last_synced_at: new Date().toISOString()
-      }, { onConflict: "address" }).catch((e: any) => ({ error: e }));
+    // Check Passport MCP
+    let passportVerified = false;
+    try {
+      const mcpRes = await fetch("https://neo.dev.gokite.ai/v1/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "get_payer_addr",
+          params: {},
+          id: Date.now()
+        })
+      });
+      if (mcpRes.ok) {
+        const mcpData = await mcpRes.json();
+        if (mcpData.result && mcpData.result.payer_addr) {
+          passportVerified = true;
+        }
+      }
+    } catch (err) {
+      console.error("MCP Check failed:", err);
+    }
 
-    if (error) console.error("Supabase offline, skipping write");
+    // Update Supabase cache with the real on-chain score
+    try {
+      const { error } = await supabase
+        .from("agents")
+        .upsert({
+          address:        agentAddress.toLowerCase(),
+          score:          scoreData.score,
+          payment_rate:   scoreData.paymentRate,
+          diversity:      scoreData.diversity,
+          tx_count:       scoreData.txCount,
+          age_days:       scoreData.agentAgeDays,
+          passport_verified: passportVerified,
+          last_synced_at: new Date().toISOString()
+        }, { onConflict: "address" });
+      if (error) console.error("Supabase error:", error);
+    } catch (e: any) {
+      console.error("Supabase offline, skipping write:", e);
+    }
 
     res.json({
       success:    true,

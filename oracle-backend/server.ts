@@ -24,18 +24,19 @@ const MIN_AMOUNT = "10000000000000000"; // 0.01 PYUSD (18 decimals)
 /**
  * x402 Payment Header Verification
  */
-function verifyPaymentHeader(header: string, expectedPayee: string, minAmount: string) {
+async function verifyPaymentOnChain(header: string) {
   try {
-    const decoded = JSON.parse(Buffer.from(header, 'base64').toString());
+    const payload = JSON.parse(Buffer.from(header, 'base64').toString());
+    const res = await fetch("https://facilitator.pieverse.io/v2/settle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
     
-    if (decoded.payee.toLowerCase() !== expectedPayee.toLowerCase()) {
-      throw new Error("Invalid payee address in payment header");
+    if (!res.ok) {
+      throw new Error(`Facilitator returned ${res.status}`);
     }
-
-    if (BigInt(decoded.amount) < BigInt(minAmount)) {
-      throw new Error(`Insufficient payment amount. Required: ${minAmount}`);
-    }
-
+    
     return true;
   } catch (err: any) {
     throw new Error(`Payment verification failed: ${err.message}`);
@@ -52,27 +53,36 @@ app.get("/score/:addr", async (req, res) => {
   if (!paymentHeader) {
     // Return 402 Required Payment
     return res.status(402).json({
+      "error": "X-PAYMENT header is required",
       "accepts": [{
         "scheme": "gokite-aa",
         "network": "kite-testnet",
-        "maxAmountRequired": MIN_AMOUNT,
-        "resource": `/score/${addr}`,
-        "description": "AgentScore credit lookup — 0.01 PYUSD",
+        "maxAmountRequired": "10000000000000000",
+        "resource": `https://agentscore.onrender.com/score/${addr}`,
+        "description": "AgentScore Oracle — verifiable on-chain credit score for Kite AI agents",
         "mimeType": "application/json",
-        "payTo": ORACLE_WALLET,
-        "asset": PYUSD_ADDRESS,
-        "merchantName": "AgentScore Oracle",
         "outputSchema": {
-          "input": { "discoverable": true, "method": "GET", "type": "http" },
+          "input": {
+            "discoverable": true,
+            "method": "GET",
+            "type": "http"
+          },
           "output": {
             "properties": {
               "score": { "type": "number", "description": "Credit score 300-850" },
-              "paymentRate": { "type": "number" },
-              "diversity": { "type": "number" },
-              "txHash": { "type": "string" }
-            }
+              "grade": { "type": "string", "description": "New/Poor/Fair/Good/Excellent" },
+              "attestationTx": { "type": "string", "description": "Kite chain tx hash" },
+              "explorerUrl": { "type": "string", "description": "Kite explorer link" }
+            },
+            "required": ["score", "grade", "attestationTx"],
+            "type": "object"
           }
-        }
+        },
+        "payTo": "0x55d829A66BB1D9f82923cBDEe355249EE5940365",
+        "maxTimeoutSeconds": 300,
+        "asset": "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9",
+        "extra": null,
+        "merchantName": "KiteCredit AgentScore Oracle"
       }],
       "x402Version": 1
     });
@@ -82,7 +92,11 @@ app.get("/score/:addr", async (req, res) => {
     if (!ORACLE_WALLET) throw new Error("Server missing ORACLE_WALLET_ADDRESS");
     
     // 1. Verify payment
-    verifyPaymentHeader(paymentHeader, ORACLE_WALLET, MIN_AMOUNT);
+    try {
+      await verifyPaymentOnChain(paymentHeader);
+    } catch (paymentErr: any) {
+      return res.status(402).json({ error: paymentErr.message });
+    }
 
     // 2. Compute score
     const scoreData = await computeScore(addr);

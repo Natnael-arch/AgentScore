@@ -2,7 +2,7 @@ import { StatCard } from "@/components/StatCard";
 import { GlassCard } from "@/components/GlassCard";
 import { TVLChart } from "@/components/TVLChart";
 import { CreditScoreGauge } from "@/components/CreditScoreGauge";
-import { DollarSign, Users, TrendingUp, Activity, ArrowRight, Wallet, CheckCircle2 } from "lucide-react";
+import { DollarSign, Users, TrendingUp, Activity, ArrowRight, Wallet, CheckCircle2, ShieldCheck, ShieldQuestion } from "lucide-react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useWallet } from '@/contexts/WalletContext';
@@ -159,7 +159,18 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <p className="text-sm text-muted-foreground">Agent Name</p>
-                <p className="font-semibold">{agentData.name}</p>
+                <p className="font-semibold flex items-center gap-2">
+                  {agentData.name}
+                  {agentData.passportVerified ? (
+                    <span title="Kite Passport Verified — cryptographic agent identity" className="text-green-500 cursor-help">
+                      <ShieldCheck className="w-4 h-4" />
+                    </span>
+                  ) : (
+                    <span title="No Passport — wallet address only" className="text-gray-400 cursor-help">
+                      <ShieldQuestion className="w-4 h-4" />
+                    </span>
+                  )}
+                </p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Credit Score</p>
