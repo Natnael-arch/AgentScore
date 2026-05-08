@@ -300,19 +300,32 @@ async function start() {
   console.log(`   WebSocket:  ws://localhost:${WS_PORT}`);
   console.log(`   Explorer:   https://testnet.kitescan.ai/address/${wallet.address}\n`);
 
-  // Fetch initial passport state
+  // Set passport state — use env var as known fallback, then try MCP for live budget
+  const knownPassportAddr = process.env.PASSPORT_ADDRESS || null;
+  broadcast({
+    passport: {
+      verified: !!knownPassportAddr,
+      address: knownPassportAddr,
+      sessionBudgetRemaining: null
+    }
+  });
+  console.log(`   Passport:   ${knownPassportAddr || "NOT SET"}`);
+
+  // Try MCP for live session budget
   try {
     const mcpClient = new KitePassportMCPClient("https://neo.dev.gokite.ai/v1/mcp");
     const res = await mcpClient.callTool('get_payer_addr', {});
     broadcast({
       passport: {
-        verified: !!res.payer_addr,
-        address: res.payer_addr || null,
-        sessionBudgetRemaining: res.session_budget ? ethers.formatUnits(res.session_budget, 18) : "10.00"
+        verified: true,
+        address: res.payer_addr || knownPassportAddr,
+        sessionBudgetRemaining: res.session_budget
+          ? ethers.formatUnits(res.session_budget, 18)
+          : null
       }
     });
   } catch (e: any) {
-    console.log(`[PASSPORT] Failed to fetch: ${e.message}`);
+    console.log(`[PASSPORT] MCP unavailable, using static address: ${e.message}`);
   }
 
   // Initial score fetch
