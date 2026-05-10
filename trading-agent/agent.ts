@@ -319,11 +319,10 @@ async function start() {
       passport: {
         verified: true,
         address: res.payer_addr || knownPassportAddr,
-        sessionBudgetRemaining: res.session_budget
-          ? ethers.formatUnits(res.session_budget, 18)
-          : null
+        sessionBudgetRemaining: null
       }
     });
+    console.log(`   Session Payer: ${res.payer_addr}`);
   } catch (e: any) {
     console.log(`[PASSPORT] MCP unavailable, using static address: ${e.message}`);
   }

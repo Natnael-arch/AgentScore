@@ -47,67 +47,105 @@ export async function getAgentScore(agentAddress: string): Promise<AgentScoreDat
   }
 }
 
+import { ethers } from "ethers";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+
+// ── Passport Session Reader ────────────────────────────────────
+interface PassportSession {
+  state: string;
+  private_key: string;
+  expires_at: string;
+}
+
+interface SessionsFile {
+  current_session_id: string;
+  sessions: Record<string, PassportSession>;
+}
+
+function getActivePassportSession(): { privateKey: string; payerAddr: string } | null {
+  try {
+    const sessionsPath = path.join(os.homedir(), ".kite-passport", "sessions.json");
+    const raw = fs.readFileSync(sessionsPath, "utf-8");
+    const data: SessionsFile = JSON.parse(raw);
+
+    // Use current session first, then fall back to any active one
+    const sessionId = data.current_session_id;
+    const session = data.sessions[sessionId];
+
+    if (session && session.state === "active" && new Date(session.expires_at) > new Date()) {
+      const wallet = new ethers.Wallet(session.private_key);
+      return { privateKey: session.private_key, payerAddr: wallet.address };
+    }
+
+    // Try any active session as fallback
+    for (const [, s] of Object.entries(data.sessions)) {
+      if (s.state === "active" && new Date(s.expires_at) > new Date()) {
+        const wallet = new ethers.Wallet(s.private_key);
+        return { privateKey: s.private_key, payerAddr: wallet.address };
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ── KitePassportMCPClient (kept for interface compatibility) ───
 export class KitePassportMCPClient {
   constructor(private url: string) {}
 
   async callTool(name: string, args: any): Promise<any> {
-    const rpcPayload = {
-      jsonrpc: "2.0",
-      method: name,
-      params: args,
-      id: Date.now()
-    };
-
-    let attempt = 0;
-    while (attempt < 3) {
-      try {
-        const res = await fetch(this.url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(rpcPayload)
-        });
-
-        if (!res.ok) throw new Error(`MCP returned ${res.status}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error.message || "MCP RPC Error");
-        return data.result;
-      } catch (err: any) {
-        attempt++;
-        if (attempt >= 3) throw new Error(`MCP Tool ${name} failed: ${err.message}`);
-        await new Promise(r => setTimeout(r, 2000)); // 2s backoff
-      }
+    if (name === "get_payer_addr") {
+      const session = getActivePassportSession();
+      if (!session) throw new Error("No active Passport session found");
+      return { payer_addr: session.payerAddr };
     }
+    throw new Error(`MCP tool '${name}' not available — use local session signing`);
   }
 }
 
+// ── Score refresh using Passport session signing ───────────────
 export async function refreshScoreViaPassport(agentAddr: string): Promise<any> {
-  const mcpClient = new KitePassportMCPClient("https://neo.dev.gokite.ai/v1/mcp");
   const baseUrl = process.env.SCORE_API_URL || "https://agentscore.onrender.com";
 
   try {
-    // Step 1: get payer address from Passport
-    const { payer_addr } = await mcpClient.callTool('get_payer_addr', {});
+    const session = getActivePassportSession();
+    if (!session) throw new Error("No active Passport session");
 
-    // Step 2: approve payment (0.01 PYUSD = 10000000000000000 wei)
-    const auth = await mcpClient.callTool('approve_payment', {
-      payer_addr,
-      payee_addr: "0x55d829A66BB1D9f82923cBDEe355249EE5940365",
-      amount: "10000000000000000",
-      token_type: "PYUSD"
-    });
+    const payerAddr = session.payerAddr;
+    const payeeAddr = "0x55d829A66BB1D9f82923cBDEe355249EE5940365";
+    const amount    = "10000000000000000"; // 0.01 PYUSD
+    const asset     = "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9";
 
-    // Step 3: call oracle with X-Payment header
+    // Build and sign the x402 payment authorization
+    const sessionWallet = new ethers.Wallet(session.privateKey);
+    const messageHash = ethers.solidityPackedKeccak256(
+      ["address", "address", "uint256", "address"],
+      [payerAddr, payeeAddr, BigInt(amount), asset]
+    );
+    const signature = await sessionWallet.signMessage(ethers.getBytes(messageHash));
+
+    const authorization = { payer: payerAddr, payee: payeeAddr, amount, asset };
+    const xPayment = Buffer.from(JSON.stringify({ authorization, signature, network: "kite-testnet" })).toString("base64");
+
+    console.log(`[PASSPORT] Signed x402 payment | payer: ${payerAddr.slice(0,10)}...`);
+
+    // Call oracle with signed payment header
     const response = await fetch(
       `${baseUrl}/score/${agentAddr}`,
-      { headers: { "X-Payment": auth.x_payment } }
+      { headers: { "X-Payment": xPayment } }
     );
 
     if (!response.ok) throw new Error(`Oracle returned ${response.status}`);
     const data = await response.json();
+    console.log(`[PASSPORT] Score refreshed: ${data.score}`);
     return data;
+
   } catch (err: any) {
-    console.log(`[MCP] refreshScoreViaPassport failed: ${err.message}. Falling back to raw.`);
-    // Fallback to raw endpoint
+    console.log(`[PASSPORT] Session signing failed: ${err.message}. Falling back to raw.`);
     try {
       return await getAgentScore(agentAddr);
     } catch {
@@ -115,3 +153,4 @@ export async function refreshScoreViaPassport(agentAddr: string): Promise<any> {
     }
   }
 }
+
