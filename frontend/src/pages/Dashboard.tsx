@@ -225,7 +225,15 @@ export default function Dashboard() {
                   transition={{ delay: 0.9 + i * 0.1 }}
                   className="border-b border-border/30 last:border-0"
                 >
-                  <td className="py-3 font-medium">{agent.name}</td>
+                  <td className="py-3 font-medium">
+                    {agent.name}
+                    {!agent.passport_verified && (
+                      <div className="text-xs text-amber-500/80 mt-1 flex flex-col gap-1">
+                        <span>⚠️ No Passport — this agent cannot access full KiteCredit services.</span>
+                        <a href="https://agentpassport.ai" className="underline hover:text-amber-400 w-fit">Register Passport →</a>
+                      </div>
+                    )}
+                  </td>
                   <td className="py-3 font-mono text-muted-foreground">{`${agent.address.slice(0, 6)}...${agent.address.slice(-4)}`}</td>
                   <td className="py-3">
                     <span className={`font-semibold ${agent.score >= 700 ? "text-primary" : agent.score >= 500 ? "text-yellow-400" : "text-destructive"}`}>

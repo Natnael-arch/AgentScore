@@ -16,6 +16,8 @@ export default function RegisterAgent() {
   const [isAlreadyRegistered, setIsAlreadyRegistered] = useState(false);
   const [registeredAgentData, setRegisteredAgentData] = useState<any>(null);
   const [justRegistered, setJustRegistered] = useState(false);
+  const [passportChecked, setPassportChecked] = useState(false);
+  const [hasPassport, setHasPassport] = useState(false);
 
   // Check if agent is already registered on mount
   useEffect(() => {
@@ -170,8 +172,41 @@ export default function RegisterAgent() {
       </motion.div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <GlassCard delay={0.1}>
-          <div className="flex items-center gap-2 mb-6">
+        {!passportChecked && (
+          <GlassCard delay={0.1}>
+            <div className="passport-gate">
+              <h2 className="text-xl font-bold mb-2">Kite Passport Required</h2>
+              <p className="text-muted-foreground mb-6">
+                KiteCredit requires every agent to have a verified Kite Passport identity before registering.
+              </p>
+              
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={() => {
+                    setHasPassport(true);
+                    setPassportChecked(true);
+                  }}
+                  className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-semibold hover:shadow-lg transition-all"
+                >
+                  ✅ I have a Kite Passport
+                </button>
+                
+                <a 
+                  href="https://agentpassport.ai" 
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3 text-center rounded-lg bg-muted text-foreground font-semibold hover:bg-muted/80 transition-colors"
+                >
+                  🔗 Get a Kite Passport first
+                </a>
+              </div>
+            </div>
+          </GlassCard>
+        )}
+
+        {passportChecked && hasPassport && (
+          <GlassCard delay={0.1}>
+            <div className="flex items-center gap-2 mb-6">
             <UserPlus className="w-5 h-5 text-primary" />
             <h3 className="text-lg font-semibold">Agent Details</h3>
           </div>
@@ -234,6 +269,7 @@ export default function RegisterAgent() {
             </button>
           </div>
         </GlassCard>
+        )}
 
         {/* Benefits */}
         <div className="space-y-4">

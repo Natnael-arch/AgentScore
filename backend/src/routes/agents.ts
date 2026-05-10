@@ -3,6 +3,24 @@ import { supabase } from "../config.js";
 
 export const agentsRouter = Router();
 
+async function verifyPassport(agentAddress: string): Promise<boolean> {
+  try {
+    const response = await fetch(
+      "https://passport.prod.gokite.ai/v1/agents/verify",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_address: agentAddress })
+      }
+    );
+    const data = await response.json();
+    return data.verified === true;
+  } catch {
+    // If Passport API is down, allow registration but flag as unverified
+    return false;
+  }
+}
+
 agentsRouter.get("/", async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -72,6 +90,16 @@ agentsRouter.post("/", async (req, res) => {
 
     if (!address) {
       return res.status(400).json({ error: "address is required" });
+    }
+
+    const passportVerified = await verifyPassport(address);
+
+    if (!passportVerified) {
+      return res.status(403).json({
+        error: "Kite Passport required",
+        message: "Agent must have a registered Kite Passport to use KiteCredit",
+        registerAt: "https://agentpassport.ai"
+      });
     }
 
     const { data: existing } = await supabase
@@ -155,27 +183,7 @@ agentsRouter.post("/sync-score", async (req, res) => {
     });
 
     // Check Passport MCP
-    let passportVerified = false;
-    try {
-      const mcpRes = await fetch("https://neo.dev.gokite.ai/v1/mcp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "get_payer_addr",
-          params: {},
-          id: Date.now()
-        })
-      });
-      if (mcpRes.ok) {
-        const mcpData = await mcpRes.json();
-        if (mcpData.result && mcpData.result.payer_addr) {
-          passportVerified = true;
-        }
-      }
-    } catch (err) {
-      console.error("MCP Check failed:", err);
-    }
+    const passportVerified = await verifyPassport(agentAddress);
 
     // Update Supabase cache with the real on-chain score
     try {
