@@ -10,6 +10,11 @@ const config: HardhatUserConfig = {
       url: "https://rpc-testnet.gokite.ai/",
       chainId: 2368,
       accounts: process.env.ORACLE_PRIVATE_KEY ? [process.env.ORACLE_PRIVATE_KEY] : []
+    },
+    kite_testnet_agent: {
+      url: "https://rpc-testnet.gokite.ai/",
+      chainId: 2368,
+      accounts: process.env.AGENT_PRIVATE_KEY ? [process.env.AGENT_PRIVATE_KEY] : []
     }
   }
 };
