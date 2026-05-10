@@ -26,7 +26,8 @@ contract TradeVault {
         bytes32  txHashClose;
     }
 
-    address public immutable owner;
+    mapping(address => bool) public authorizedCallers;
+    address public owner;
 
     uint256 public nextPositionId;
     mapping(uint256 => Position) public positions;
@@ -39,13 +40,19 @@ contract TradeVault {
     event PositionOpened(uint256 indexed id, address indexed agent, string asset, Side side, uint256 entryPrice, uint256 size);
     event PositionClosed(uint256 indexed id, int256 pnl, uint256 exitPrice);
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner");
+    constructor() {
+        owner = msg.sender;
+        authorizedCallers[msg.sender] = true;
+    }
+
+    modifier onlyAuthorized() {
+        require(authorizedCallers[msg.sender], "Not authorized");
         _;
     }
 
-    constructor() {
-        owner = msg.sender;
+    function addAuthorizedCaller(address caller) external {
+        require(msg.sender == owner, "Only owner");
+        authorizedCallers[caller] = true;
     }
 
     /**
@@ -61,7 +68,7 @@ contract TradeVault {
         uint8 side,
         uint256 entryPrice,
         uint256 size
-    ) external onlyOwner returns (uint256) {
+    ) external onlyAuthorized returns (uint256) {
         require(side <= 1, "Invalid side");
         require(entryPrice > 0, "Price must be > 0");
         require(size > 0, "Size must be > 0");
@@ -99,7 +106,7 @@ contract TradeVault {
         uint256 exitPrice,
         int256  pnl,
         bytes32 txHash
-    ) external onlyOwner {
+    ) external onlyAuthorized {
         Position storage pos = positions[id];
         require(pos.status == Status.OPEN, "Position not open");
 

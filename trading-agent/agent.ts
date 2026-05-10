@@ -5,6 +5,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import * as dotenv    from "dotenv";
 import { getAgentScore, AgentScoreData, refreshScoreViaPassport, scoreToMaxLoan, scoreToGrade, KitePassportMCPClient } from "./scorer";
 import { getVaultContract, getVaultStats, getOpenPositionDetails, openPositionWithAA, PositionData, VaultStats } from "./vault";
+import { GokiteAASDK } from "gokite-aa-sdk";
 dotenv.config();
 
 // ── Providers and wallets ─────────────────────────────────────
@@ -398,12 +399,25 @@ app.listen(PORT);
 
 // ── Start ─────────────────────────────────────────────────────
 async function start() {
-  console.log(`\n🤖 KiteCredit Trading Agent`);
-  console.log(`   Wallet:     ${wallet.address}`);
-  console.log(`   Vault:      ${process.env.TRADE_VAULT_ADDRESS || "NOT SET"}`);
-  console.log(`   HTTP:       http://localhost:${PORT}`);
-  console.log(`   WebSocket:  ws://localhost:${WS_PORT}`);
-  console.log(`   Explorer:   https://testnet.kitescan.ai/address/${wallet.address}\n`);
+
+
+  // Compute AA wallet address
+  const aaSDK = new GokiteAASDK(
+    "kite_testnet",
+    "https://rpc-testnet.gokite.ai",
+    "https://bundler-service.staging.gokite.ai/rpc/"
+  );
+  const aaWalletAddress = aaSDK.getAccountAddress(wallet.address);
+
+  console.log(`
+🤖 KiteCredit Trading Agent
+   Wallet (EOA): ${wallet.address}
+   Wallet (AA):  ${aaWalletAddress}
+   Vault:      ${process.env.TRADE_VAULT_ADDRESS || "NOT SET"}
+   HTTP:       http://localhost:${process.env.PORT || 4000}
+   WebSocket:  ws://localhost:${process.env.WS_PORT || 4001}
+   Explorer:   https://testnet.kitescan.ai/address/${wallet.address}
+`);
 
   // Set passport state — use env var as known fallback, then try MCP for live budget
   const knownPassportAddr = process.env.PASSPORT_ADDRESS || null;
