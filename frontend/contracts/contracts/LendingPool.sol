@@ -44,6 +44,28 @@ contract LendingPool is Ownable, ReentrancyGuard {
     event Repaid(address indexed borrower, uint256 amount);
     event CollateralAdded(address indexed borrower, uint256 amount);
     event InterestPaid(address indexed lender, uint256 amount);
+    event LoanRepayment(
+        address indexed agent,
+        uint256 amount,
+        uint256 loanId,
+        bool    fullyRepaid,
+        uint256 timestamp
+    );
+    
+    struct RepaymentRecord {
+        uint256 loanId;
+        uint256 amount;
+        bool    fullyRepaid;
+        uint256 timestamp;
+    }
+
+    mapping(address => RepaymentRecord[]) public repaymentHistory;
+    uint256 public nextLoanId = 1;
+
+    function getRepaymentHistory(address agent) 
+        external view returns (RepaymentRecord[] memory) {
+        return repaymentHistory[agent];
+    }
     
     constructor(address _pyusdToken, address _scoreOracle) {
         pyusdToken = IERC20(_pyusdToken);
@@ -165,6 +187,24 @@ contract LendingPool is Ownable, ReentrancyGuard {
         require(pyusdToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
         
         emit Repaid(_borrower, amount);
+        
+        bool fullyRepaid = (borrower.borrowedAmount == 0);
+        uint256 loanId = nextLoanId++; // Simple loan ID for now
+        
+        emit LoanRepayment(
+            _borrower,
+            amount,
+            loanId,
+            fullyRepaid,
+            block.timestamp
+        );
+        
+        repaymentHistory[_borrower].push(RepaymentRecord({
+            loanId: loanId,
+            amount: amount,
+            fullyRepaid: fullyRepaid,
+            timestamp: block.timestamp
+        }));
     }
     
     function addCollateral(uint256 amount) external nonReentrant {

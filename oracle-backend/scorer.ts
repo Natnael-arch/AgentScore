@@ -23,7 +23,50 @@ export interface ScoreResult {
     age: number;
     diversity: number;
     sessions: number;
+    repayment: number;
   };
+}
+
+async function scoreRepaymentHistory(
+  agentAddress: string,
+  provider: ethers.JsonRpcProvider
+): Promise<number> {
+  const LENDING_POOL_ADDRESS = process.env.LENDING_POOL_ADDRESS;
+  if (!LENDING_POOL_ADDRESS) return 0;
+  
+  try {
+    const abi = [
+      "function getRepaymentHistory(address agent) view returns (tuple(uint256 loanId, uint256 amount, bool fullyRepaid, uint256 timestamp)[])"
+    ];
+
+    const contract = new ethers.Contract(
+      LENDING_POOL_ADDRESS, abi, provider
+    );
+
+    const history = await contract.getRepaymentHistory(agentAddress);
+
+    let points = 0;
+    let fullRepayments = 0;
+
+    for (const record of history) {
+      if (record.fullyRepaid) {
+        fullRepayments++;
+        points += 40; // fully repaid loan
+      } else {
+        points += 10; // partial repayment — still positive
+      }
+    }
+
+    // Cap at 3 full repayments = 120 pts max
+    // Bonus for consistent repayer
+    if (fullRepayments >= 2) points += 30;
+    if (fullRepayments >= 3) points += 42;
+
+    return Math.min(192, points);
+  } catch (error) {
+    console.error(`    ❌ Error fetching repayment history:`, error);
+    return 0;
+  }
 }
 
 /**
@@ -120,19 +163,16 @@ export async function computeScore(agentAddress: string): Promise<ScoreResult> {
   const agentAgeDays = Math.floor((agentAgeBlocks * 2) / 86400);
 
   // 6. Apply weighted formula (base 300, max 850)
-  // points += paymentRate * 2.2            // 40% weight, max 220
-  // points += Math.min(txCount, 50) * 2.2  // 20% weight, max 110
-  // points += Math.min(agentAgeDays, 30) * 2.75 // 15% weight, max 82.5
-  // points += Math.min(diversity, 10) * 8.25    // 15% weight, max 82.5
-  // points += Math.min(successCount, 10) * 5.5  // 10% weight, max 55
+  const repaymentPoints = await scoreRepaymentHistory(agentAddress, provider);
+  
+  // Rescale weights to make room for repayment (35% = 192.5 max points)
+  const p_paymentRate = paymentRate * 1.375;               // 25% weight, max 137.5
+  const p_txVolume = Math.min(txCount, 50) * 1.1;          // 10% weight, max 55
+  const p_age = Math.min(agentAgeDays, 30) * 1.833;        // 10% weight, max 55
+  const p_diversity = Math.min(diversity, 10) * 8.25;      // 15% weight, max 82.5
+  const p_sessions = Math.min(successCount, 10) * 2.75;    // 5% weight, max 27.5
 
-  const p_paymentRate = paymentRate * 2.2;
-  const p_txVolume = Math.min(txCount, 50) * 2.2;
-  const p_age = Math.min(agentAgeDays, 30) * 2.75;
-  const p_diversity = Math.min(diversity, 10) * 8.25;
-  const p_sessions = Math.min(successCount, 10) * 5.5;
-
-  const totalPoints = p_paymentRate + p_txVolume + p_age + p_diversity + p_sessions;
+  const totalPoints = repaymentPoints + p_paymentRate + p_txVolume + p_age + p_diversity + p_sessions;
   const score = Math.min(850, Math.max(300, Math.round(300 + totalPoints)));
 
   return {
@@ -146,7 +186,8 @@ export async function computeScore(agentAddress: string): Promise<ScoreResult> {
       txVolume: Math.round(p_txVolume),
       age: Math.round(p_age),
       diversity: Math.round(p_diversity),
-      sessions: Math.round(p_sessions)
+      sessions: Math.round(p_sessions),
+      repayment: Math.round(repaymentPoints)
     }
   };
 }
@@ -163,7 +204,8 @@ function emptyScore(): ScoreResult {
       txVolume: 0,
       age: 0,
       diversity: 0,
-      sessions: 0
+      sessions: 0,
+      repayment: 0
     }
   };
 }
