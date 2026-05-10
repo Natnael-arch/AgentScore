@@ -4,7 +4,7 @@ import { ethers }     from "ethers";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import * as dotenv    from "dotenv";
 import { getAgentScore, AgentScoreData, refreshScoreViaPassport, scoreToMaxLoan, scoreToGrade, KitePassportMCPClient } from "./scorer";
-import { getVaultContract, getVaultStats, getOpenPositionDetails, PositionData, VaultStats } from "./vault";
+import { getVaultContract, getVaultStats, getOpenPositionDetails, openPositionWithAA, PositionData, VaultStats } from "./vault";
 dotenv.config();
 
 // ── Providers and wallets ─────────────────────────────────────
@@ -146,20 +146,30 @@ Example: {"side":"LONG","reason":"strong positive momentum"}`;
   }
 }
 
-// ── Open position on TradeVault.sol ──────────────────────────
+// ── Open position via AA batch (vault + attest) ─────────────
 async function openPosition(
   asset: string,
   price: number
 ): Promise<void> {
-  if (!vault) return;
+  const vaultAddr = process.env.TRADE_VAULT_ADDRESS;
+  if (!vaultAddr) return;
+
   const priceInt = Math.round(price * 100);
   const sizeWei  = ethers.parseEther("10"); // $10 per trade
 
-  const tx = await vault.openPosition(asset, 0, priceInt, sizeWei);
-  await tx.wait();
+  // Use current score data (or sensible defaults) for the attest call
+  const scoreData = state.scoreData || {
+    score: 500, paymentRate: 80, diversity: 3,
+    txCount: 10, agentAgeDays: 1, maxLoan: 10, grade: "Fair"
+  };
 
-  console.log(`[OPEN] LONG ${asset} @ $${price} | tx: ${tx.hash}`);
-  addTx(tx.hash, `OPEN LONG ${asset} @ $${price.toFixed(2)}`);
+  const txHash = await openPositionWithAA(
+    vaultAddr, wallet, asset, priceInt, sizeWei, scoreData
+  );
+
+  console.log(`[OPEN] LONG ${asset} @ $${price} | tx: ${txHash}`);
+  console.log(`       https://testnet.kitescan.ai/tx/${txHash}`);
+  addTx(txHash, `OPEN LONG ${asset} @ $${price.toFixed(2)}`);
 }
 
 // ── Check and close positions ─────────────────────────────────
