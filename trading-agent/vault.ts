@@ -81,37 +81,22 @@ export async function getOpenPositionDetails(
 }
 
 import { GokiteAASDK, BatchUserOperationRequest } from "gokite-aa-sdk";
-import { AgentScoreData } from "./scorer";
 
 export async function openPositionWithAA(
   vaultAddress: string,
   wallet: ethers.Wallet,
   asset: string,
   priceInt: number,
-  sizeWei: bigint,
-  scoreData: AgentScoreData
+  sizeWei: bigint
 ): Promise<string> {
   const bundlerUrl = "https://bundler-service.staging.gokite.ai/rpc/";
-  const attestAddress = "0xF04B3a11db07d206F61Bf08645169793cbD442C3";
 
   // 1. Prepare call data
   const vaultInterface = new ethers.Interface(VAULT_ABI);
   const vaultCallData = vaultInterface.encodeFunctionData("openPosition", [asset, 0, priceInt, sizeWei]);
 
-  const attestInterface = new ethers.Interface([
-    "function attest(address,uint16,uint8,uint8,uint32,uint16)"
-  ]);
-  const attestCallData = attestInterface.encodeFunctionData("attest", [
-    wallet.address,
-    scoreData.score,
-    scoreData.paymentRate,
-    scoreData.diversity,
-    scoreData.txCount,
-    scoreData.agentAgeDays
-  ]);
-
   try {
-    console.log(`[AA] Attempting batched UserOperation for ${asset}...`);
+    console.log(`[AA] Attempting UserOperation for ${asset}...`);
     const aaSDK = new GokiteAASDK(
       "kite_testnet",
       "https://rpc-testnet.gokite.ai",
@@ -124,9 +109,9 @@ export async function openPositionWithAA(
     };
 
     const request: BatchUserOperationRequest = {
-      targets: [vaultAddress, attestAddress],
-      values: [0n, 0n],
-      callDatas: [vaultCallData, attestCallData]
+      targets: [vaultAddress],
+      values: [0n],
+      callDatas: [vaultCallData]
     };
 
     const result = await aaSDK.sendUserOperationAndWait(
@@ -139,7 +124,7 @@ export async function openPositionWithAA(
       throw new Error("No transaction hash returned from bundler");
     }
 
-    console.log(`[AA] Batched UserOperation successful! tx: ${result.status.transactionHash}`);
+    console.log(`[AA] UserOperation successful! tx: ${result.status.transactionHash}`);
     return result.status.transactionHash;
 
   } catch (error: any) {

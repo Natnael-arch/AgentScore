@@ -236,14 +236,8 @@ async function openPosition(
   const priceInt = Math.round(price * 100);
   const sizeWei  = ethers.parseEther("10"); // $10 per trade
 
-  // Use current score data (or sensible defaults) for the attest call
-  const scoreData = state.scoreData || {
-    score: 500, paymentRate: 80, diversity: 3,
-    txCount: 10, agentAgeDays: 1, maxLoan: 10, grade: "Fair"
-  };
-
   const txHash = await openPositionWithAA(
-    vaultAddr, wallet, asset, priceInt, sizeWei, scoreData
+    vaultAddr, wallet, asset, priceInt, sizeWei
   );
 
   console.log(`[OPEN] LONG ${asset} @ $${price} | tx: ${txHash}`);
