@@ -1,7 +1,7 @@
 import express        from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { ethers }     from "ethers";
-import Anthropic      from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import * as dotenv    from "dotenv";
 import { getAgentScore, AgentScoreData, refreshScoreViaPassport, scoreToMaxLoan, scoreToGrade, KitePassportMCPClient } from "./scorer";
 import { getVaultContract, getVaultStats, getOpenPositionDetails, PositionData, VaultStats } from "./vault";
@@ -12,7 +12,7 @@ const provider  = new ethers.JsonRpcProvider(
   process.env.KITE_RPC_URL || "https://rpc-testnet.gokite.ai/"
 );
 const wallet    = new ethers.Wallet(process.env.AGENT_PRIVATE_KEY!, provider);
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI     = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 // ── Contract setup ────────────────────────────────────────────
 const PYUSD     = process.env.PYUSD_ADDRESS || "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9";
@@ -106,31 +106,43 @@ async function getMarketData() {
   };
 }
 
-// ── Claude trade signal ───────────────────────────────────────
+// ── Gemini trade signal ───────────────────────────────────────
 async function getTradeSignal(
   asset: string,
   price: number,
   change24h: number
 ): Promise<{ side: "LONG" | "SKIP"; reason: string }> {
-  const msg = await anthropic.messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 100,
-    messages: [{
-      role:    "user",
-      content: `You are an autonomous trading agent on Kite AI blockchain.
+  if (!process.env.GEMINI_API_KEY) {
+    return { side: "SKIP", reason: "No Gemini key — set GEMINI_API_KEY" };
+  }
+
+  try {
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash"
+    });
+
+    const prompt = `You are an autonomous trading agent on Kite AI blockchain.
 Asset: ${asset} | Price: $${price.toFixed(2)} | 24h: ${change24h.toFixed(2)}%
 Capital at risk: $10 PYUSD | Stop loss: 3% | Take profit: 5%
 Decide: LONG if clear positive momentum, SKIP if unclear.
-JSON only: {"side":"LONG"|"SKIP","reason":"max 12 words"}`
-    }]
-  });
+Return ONLY valid JSON.
+Example: {"side":"LONG","reason":"strong positive momentum"}`;
 
-  try {
-    const text  = msg.content[0].type === "text" ? msg.content[0].text : "{}";
-    const clean = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(clean);
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    console.log("Raw Gemini Output:", text);
+    
+    // Find the first { and last } to extract just the JSON
+    const startIndex = text.indexOf('{');
+    const endIndex = text.lastIndexOf('}');
+    if (startIndex !== -1 && endIndex !== -1) {
+      const clean = text.substring(startIndex, endIndex + 1);
+      return JSON.parse(clean);
+    }
+    throw new Error("No JSON found in response");
   } catch (e: any) {
-    return { side: "SKIP", reason: "API Error — skipping" };
+    console.error(`Gemini Error details: ${e.message}`);
+    return { side: "SKIP", reason: "Gemini error — skipping" };
   }
 }
 
