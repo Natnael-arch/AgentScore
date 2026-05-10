@@ -34,7 +34,7 @@ interface AgentState {
   loopCount:       number;
   lastLoopAt:      string;
   scoreData:       AgentScoreData | null;
-  marketPrices:    Record<string, { price: number; change24h: number }>;
+  marketPrices:    Record<string, { price: number; change4m: number; change12m: number; rsi: number; trend: string }>;
   lastSignal:      { asset: string; side: string; reason: string } | null;
   openPositions:   PositionData[];
   vaultStats:      VaultStats | null;
@@ -92,47 +92,125 @@ function addTx(hash: string, type: string) {
   broadcast({ recentTxs: state.recentTxs });
 }
 
-// ── Market data ───────────────────────────────────────────────
+// ── Candle data + indicators ──────────────────────────────────
+interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+interface MarketAnalysis {
+  price: number;
+  change4m: number;      // % change over last candle
+  change12m: number;     // % change over last 3 candles
+  rsi: number;           // 14-period RSI
+  trend: "UP" | "DOWN" | "FLAT";
+  recentCandles: Candle[];
+}
+
+function computeRSI(candles: Candle[], period = 14): number {
+  if (candles.length < period + 1) return 50;
+  const changes = candles.slice(-(period + 1)).map((c, i, arr) =>
+    i === 0 ? 0 : arr[i].close - arr[i - 1].close
+  ).slice(1);
+
+  let avgGain = 0, avgLoss = 0;
+  for (const ch of changes) {
+    if (ch > 0) avgGain += ch;
+    else avgLoss += Math.abs(ch);
+  }
+  avgGain /= period;
+  avgLoss /= period;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+}
+
 async function getMarketData() {
-  const res = await fetch(
-    "https://api.coingecko.com/api/v3/simple/price" +
-    "?ids=ethereum,bitcoin&vs_currencies=usd&include_24hr_change=true"
+  // CoinGecko OHLC (1-day range gives ~288 candles at 5-min intervals)
+  const ohlcRes = await fetch(
+    "https://api.coingecko.com/api/v3/coins/ethereum/ohlc?vs_currency=usd&days=1"
   );
-  if (!res.ok) throw new Error(`CoinGecko ${res.status}`);
-  const d = await res.json();
+  if (!ohlcRes.ok) throw new Error(`CoinGecko OHLC ${ohlcRes.status}`);
+  const ohlcRaw: number[][] = await ohlcRes.json();
+
+  const candles: Candle[] = ohlcRaw.map(([t, o, h, l, c]) => ({
+    time: t, open: o, high: h, low: l, close: c
+  }));
+
+  const latest  = candles[candles.length - 1];
+  const prev1   = candles.length > 1 ? candles[candles.length - 2] : latest;
+  const prev3   = candles.length > 3 ? candles[candles.length - 4] : latest;
+
+  const change4m  = ((latest.close - prev1.close) / prev1.close) * 100;
+  const change12m = ((latest.close - prev3.close) / prev3.close) * 100;
+  const rsi       = computeRSI(candles);
+
+  // Determine trend from last 5 candles
+  const last5 = candles.slice(-5);
+  const closes = last5.map(c => c.close);
+  const upMoves = closes.filter((c, i) => i > 0 && c > closes[i - 1]).length;
+  const trend: "UP" | "DOWN" | "FLAT" = upMoves >= 3 ? "UP" : upMoves <= 1 ? "DOWN" : "FLAT";
+
+  const analysis: MarketAnalysis = {
+    price: latest.close,
+    change4m,
+    change12m,
+    rsi,
+    trend,
+    recentCandles: candles.slice(-8) // last ~32 min of candles
+  };
+
   return {
-    ETH: { price: d.ethereum.usd, change24h: d.ethereum.usd_24h_change },
-    BTC: { price: d.bitcoin.usd,  change24h: d.bitcoin.usd_24h_change  }
+    ETH: analysis,
+    BTC: { price: 0, change4m: 0, change12m: 0, rsi: 50, trend: "FLAT" as const, recentCandles: [] }
   };
 }
 
-// ── Gemini trade signal ───────────────────────────────────────
+// ── Gemini trade signal (candle-based) ────────────────────────
 async function getTradeSignal(
   asset: string,
-  price: number,
-  change24h: number
+  analysis: MarketAnalysis
 ): Promise<{ side: "LONG" | "SKIP"; reason: string }> {
   if (!process.env.GEMINI_API_KEY) {
     return { side: "SKIP", reason: "No Gemini key — set GEMINI_API_KEY" };
   }
 
+  // Format recent candles for the prompt
+  const candleTable = analysis.recentCandles.map(c =>
+    `  ${new Date(c.time).toISOString().slice(11,19)} | O:${c.open.toFixed(2)} H:${c.high.toFixed(2)} L:${c.low.toFixed(2)} C:${c.close.toFixed(2)}`
+  ).join("\n");
+
   try {
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash"
-    });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `You are an autonomous trading agent on Kite AI blockchain.
-Asset: ${asset} | Price: $${price.toFixed(2)} | 24h: ${change24h.toFixed(2)}%
-Capital at risk: $10 PYUSD | Stop loss: 3% | Take profit: 5%
-Decide: LONG if clear positive momentum, SKIP if unclear.
-Return ONLY valid JSON.
-Example: {"side":"LONG","reason":"strong positive momentum"}`;
+You make decisions on 4-minute candles. Here is the current market data:
+
+Asset: ${asset}
+Current Price: $${analysis.price.toFixed(2)}
+Last candle change: ${analysis.change4m.toFixed(3)}%
+3-candle change (12min): ${analysis.change12m.toFixed(3)}%
+RSI(14): ${analysis.rsi.toFixed(1)}
+Short-term trend: ${analysis.trend}
+
+Recent candles (time | OHLC):
+${candleTable}
+
+Rules:
+- Capital at risk: $10 PYUSD per trade
+- Stop loss: 3% | Take profit: 5%
+- Go LONG if: RSI < 65 AND (3-candle change > 0.15% OR trend is UP with momentum)
+- SKIP if: RSI > 70 (overbought) OR trend is DOWN OR momentum is flat/weak
+- Be decisive — a mild uptrend with consistent green candles IS tradeable
+
+Return ONLY valid JSON: {"side":"LONG" or "SKIP","reason":"max 15 words"}`;
 
     const result = await model.generateContent(prompt);
     const text = result.response.text();
-    console.log("Raw Gemini Output:", text);
-    
-    // Find the first { and last } to extract just the JSON
+
     const startIndex = text.indexOf('{');
     const endIndex = text.lastIndexOf('}');
     if (startIndex !== -1 && endIndex !== -1) {
@@ -141,7 +219,7 @@ Example: {"side":"LONG","reason":"strong positive momentum"}`;
     }
     throw new Error("No JSON found in response");
   } catch (e: any) {
-    console.error(`Gemini Error details: ${e.message}`);
+    console.error(`Gemini Error: ${e.message}`);
     return { side: "SKIP", reason: "Gemini error — skipping" };
   }
 }
@@ -174,7 +252,7 @@ async function openPosition(
 
 // ── Check and close positions ─────────────────────────────────
 async function managePositions(
-  prices: Record<string, { price: number; change24h: number }>
+  prices: Record<string, MarketAnalysis>
 ): Promise<void> {
   if (!vault) return;
   const positions = await getOpenPositionDetails(vault);
@@ -243,7 +321,8 @@ async function tradingLoop(): Promise<void> {
     // 1. Fetch market prices
     const prices = await getMarketData();
     broadcast({ marketPrices: prices });
-    console.log(`\n── Loop #${state.loopCount} | ETH $${prices.ETH.price.toFixed(2)}`);
+    const eth = prices.ETH;
+    console.log(`\n── Loop #${state.loopCount} | ETH $${eth.price.toFixed(2)} | 4m: ${eth.change4m.toFixed(3)}% | 12m: ${eth.change12m.toFixed(3)}% | RSI: ${eth.rsi.toFixed(1)} | ${eth.trend}`);
 
     // 2. Manage existing positions
     await managePositions(prices);
@@ -259,9 +338,13 @@ async function tradingLoop(): Promise<void> {
 
     // 4. Open new trade if no open positions
     if (state.openPositions.length === 0) {
-      const { side, reason } = await getTradeSignal(
-        "ETH", prices.ETH.price, prices.ETH.change24h
-      );
+      // TEST MODE — forces immediate LONG, bypasses Gemini
+      const TEST_FORCE_TRADE = process.env.TEST_FORCE_TRADE === 'true';
+
+      const { side, reason } = TEST_FORCE_TRADE
+        ? { side: 'LONG' as const, reason: 'Test mode — forced trade to verify full loop' }
+        : await getTradeSignal("ETH", prices.ETH);
+      
       broadcast({ lastSignal: { asset: "ETH", side, reason } });
       console.log(`[SIGNAL] ETH: ${side} — ${reason}`);
 
@@ -355,7 +438,7 @@ async function start() {
 
   // Run immediately then every 3 minutes
   await tradingLoop();
-  setInterval(tradingLoop, 3 * 60 * 1000);
+  setInterval(tradingLoop, 4 * 60 * 1000); // 4-minute candle interval
 }
 
 start().catch(console.error);
