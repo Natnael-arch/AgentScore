@@ -21,7 +21,7 @@ const PYUSD_ABI = [
   "function approve(address,uint256) external returns (bool)",
   "function balanceOf(address) external view returns (uint256)"
 ];
-const LOAN_ABI  = ["function receiveIncome(uint256) external"];
+const LOAN_ABI  = ["function repay(address,uint256) external"];
 
 const pyusd = new ethers.Contract(PYUSD, PYUSD_ABI, wallet);
 const vault = process.env.TRADE_VAULT_ADDRESS
@@ -288,18 +288,22 @@ async function managePositions(
   }
 }
 
-// ── Settle profit through LoanAgreement ──────────────────────
+// ── Settle profit through LendingPool ─────────────────────────
 async function settlePnl(amount: bigint): Promise<void> {
   if (!process.env.LOAN_AGREEMENT_ADDRESS || amount <= 0n) return;
   try {
+    // Send 30% of profit to the lending pool as loan repayment
+    const repayAmount = (amount * 30n) / 100n;
+    if (repayAmount <= 0n) return;
+
     const loan = new ethers.Contract(
       process.env.LOAN_AGREEMENT_ADDRESS, LOAN_ABI, wallet
     );
-    await (await pyusd.approve(process.env.LOAN_AGREEMENT_ADDRESS, amount)).wait();
-    const tx = await loan.receiveIncome(amount);
+    await (await pyusd.approve(process.env.LOAN_AGREEMENT_ADDRESS, repayAmount)).wait();
+    const tx = await loan.repay(wallet.address, repayAmount);
     await tx.wait();
-    console.log(`[REPAY] 30% to pool, 70% to agent | tx: ${tx.hash}`);
-    addTx(tx.hash, "REPAY 30% to lending pool");
+    console.log(`[REPAY] ${ethers.formatEther(repayAmount)} PYUSD to pool | tx: ${tx.hash}`);
+    addTx(tx.hash, `REPAY ${ethers.formatEther(repayAmount)} PYUSD`);
   } catch (e: any) {
     console.error(`[REPAY] Failed: ${e.message}`);
   }
