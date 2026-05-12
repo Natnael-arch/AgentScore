@@ -19,9 +19,13 @@ const genAI     = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 const PYUSD     = process.env.PYUSD_ADDRESS || "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9";
 const PYUSD_ABI = [
   "function approve(address,uint256) external returns (bool)",
-  "function balanceOf(address) external view returns (uint256)"
+  "function balanceOf(address) external view returns (uint256)",
+  "function allowance(address,address) external view returns (uint256)"
 ];
-const LOAN_ABI  = ["function repay(address,uint256) external"];
+const X402_ABI = [
+  "function splitPayment(address token, address targetAgent, uint256 amount) external",
+  "event PaymentSplit(address indexed from, address indexed to, address indexed token, uint256 totalAmount, uint256 agentPortion, uint256 poolPortion)"
+];
 
 const pyusd = new ethers.Contract(PYUSD, PYUSD_ABI, wallet);
 const vault = process.env.TRADE_VAULT_ADDRESS
@@ -281,31 +285,76 @@ async function managePositions(
     console.log(`[CLOSE] Position ${pos.id} | P&L: ${label} PYUSD | tx: ${tx.hash}`);
     addTx(tx.hash, `CLOSE ${pos.asset} P&L: ${label} PYUSD`);
 
-    // Settle profit through loan agreement
-    if (priceDiff > 0 && process.env.LOAN_AGREEMENT_ADDRESS) {
+    // Route profit through X402Processor (30% pool / 70% agent)
+    if (priceDiff > 0 && process.env.X402_PROCESSOR_ADDRESS) {
       await settlePnl(pnlWei);
+    } else if (priceDiff <= 0) {
+      console.log(`[REPAY] Position closed at loss — no repayment this cycle`);
     }
   }
 }
 
-// ── Settle profit through LendingPool ─────────────────────────
+// ── Settle profit through X402Processor ───────────────────────
 async function settlePnl(amount: bigint): Promise<void> {
-  if (!process.env.LOAN_AGREEMENT_ADDRESS || amount <= 0n) return;
+  if (!process.env.X402_PROCESSOR_ADDRESS || amount <= 0n) return;
   try {
-    // Send 30% of profit to the lending pool as loan repayment
-    const repayAmount = (amount * 30n) / 100n;
-    if (repayAmount <= 0n) return;
-
-    const loan = new ethers.Contract(
-      process.env.LOAN_AGREEMENT_ADDRESS, LOAN_ABI, wallet
+    const x402 = new ethers.Contract(
+      process.env.X402_PROCESSOR_ADDRESS, X402_ABI, wallet
     );
-    await (await pyusd.approve(process.env.LOAN_AGREEMENT_ADDRESS, repayAmount)).wait();
-    const tx = await loan.repay(wallet.address, repayAmount);
+
+    // Check allowance before approving — never double-approve
+    const allowance = await pyusd.allowance(
+      wallet.address,
+      process.env.X402_PROCESSOR_ADDRESS
+    );
+    if (allowance < amount) {
+      const approveTx = await pyusd.approve(
+        process.env.X402_PROCESSOR_ADDRESS,
+        ethers.MaxUint256
+      );
+      await approveTx.wait();
+      console.log(`[REPAY] ✅ PYUSD approved for X402Processor`);
+    }
+
+    // Send full profit — contract splits 30% pool / 70% agent
+    const tx = await x402.splitPayment(
+      PYUSD,           // token
+      wallet.address,  // targetAgent
+      amount           // full profit amount
+    );
     await tx.wait();
-    console.log(`[REPAY] ${ethers.formatEther(repayAmount)} PYUSD to pool | tx: ${tx.hash}`);
-    addTx(tx.hash, `REPAY ${ethers.formatEther(repayAmount)} PYUSD`);
-  } catch (e: any) {
-    console.error(`[REPAY] Failed: ${e.message}`);
+
+    // Display only — actual split enforced by contract
+    const total   = ethers.formatUnits(amount, 18);
+    const toPool  = ethers.formatUnits(amount * 30n / 100n, 18);
+    const toAgent = ethers.formatUnits(amount * 70n / 100n, 18);
+
+    console.log(`[REPAY] ✅ X402Processor split executed`);
+    console.log(`[REPAY]    Total:         ${total} PYUSD`);
+    console.log(`[REPAY]    → Pool (30%):  ${toPool} PYUSD`);
+    console.log(`[REPAY]    → Agent (70%): ${toAgent} PYUSD`);
+    console.log(`[REPAY]    tx: https://testnet.kitescan.ai/tx/${tx.hash}`);
+
+    addTx(tx.hash, `REPAY ${total} PYUSD (30% pool / 70% agent)`);
+
+    // Broadcast repayment to WebSocket dashboard
+    broadcast({
+      lastRepayment: {
+        total,
+        toPool,
+        toAgent,
+        txHash: tx.hash,
+        explorerUrl: `https://testnet.kitescan.ai/tx/${tx.hash}`
+      }
+    } as any);
+
+  } catch (err: any) {
+    console.error(`[REPAY] ❌ Failed:`, {
+      contract: process.env.X402_PROCESSOR_ADDRESS,
+      function: "splitPayment",
+      amount: amount.toString(),
+      error: err.message
+    });
   }
 }
 

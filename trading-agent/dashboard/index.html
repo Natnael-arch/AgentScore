@@ -334,6 +334,12 @@
             <div style="font-size:10px;color:var(--text3);text-align:center">Waiting for Claude analysis...</div>
           </div>
 
+          <!-- Last Repayment -->
+          <div class="sec-label">Last Repayment</div>
+          <div id="repayment-card" style="border:1px solid #1e2a3a;border-radius:6px;padding:10px;background:#0d1117;margin-bottom:16px">
+            <div style="font-size:10px;color:#64748b;text-align:center">No repayments yet</div>
+          </div>
+
           <!-- Market Overview -->
           <div class="sec-label">Market Overview</div>
           <div style="margin-bottom:16px">
@@ -518,6 +524,7 @@
       if (state.lastSignal) renderSignal(state.lastSignal);
       if (state.recentTxs) renderTxFeed(state.recentTxs);
       if (state.vaultStats) updatePerf(state.vaultStats);
+      if (state.lastRepayment) renderRepayment(state.lastRepayment);
 
       if (state.loopCount !== undefined) {
         document.getElementById('loop-num').textContent = state.loopCount;
@@ -694,6 +701,40 @@
         </div>
         <div style="font-size:10px;color:var(--text2);line-height:1.4">${sig.reason}</div>
         <div style="font-size:9px;color:var(--text3);margin-top:4px">claude-haiku-4-5-20251001 · ${new Date().toLocaleTimeString()}</div>
+      `;
+    }
+
+    // Render Repayment Card
+    function renderRepayment(repay) {
+      const card = document.getElementById('repayment-card');
+      if (!repay) return;
+
+      if (repay.loss) {
+        card.innerHTML = `
+          <div style="text-align:center">
+            <div style="font-size:11px;font-weight:700;color:#f59e0b;margin-bottom:4px">Last position: loss</div>
+            <div style="font-size:10px;color:#f59e0b">No repayment this cycle</div>
+          </div>
+        `;
+        return;
+      }
+
+      card.innerHTML = `
+        <div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="font-size:10px;color:#64748b">Total</span>
+            <span style="font-size:11px;font-weight:700;color:#e2e8f0">${repay.total} PYUSD</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <span style="font-size:10px;color:#64748b">→ Pool (30%)</span>
+            <span style="font-size:10px;color:#10b981">${repay.toPool}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <span style="font-size:10px;color:#64748b">→ Agent (70%)</span>
+            <span style="font-size:10px;color:#10b981">${repay.toAgent}</span>
+          </div>
+        </div>
+        <a href="${repay.explorerUrl}" target="_blank" style="font-size:10px;color:var(--blue3);text-decoration:none;display:block;text-align:center">view on KiteScan ↗</a>
       `;
     }
 
