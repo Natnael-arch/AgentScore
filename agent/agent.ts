@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import * as dotenv from "dotenv";
 import { ethers } from "ethers";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 
 dotenv.config();
 
@@ -24,10 +24,9 @@ if (!AGENT_KEY) throw new Error("Missing AGENT_PRIVATE_KEY");
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const wallet = new ethers.Wallet(AGENT_KEY, provider);
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
-const model = genAI.getGenerativeModel({ 
-  model: "gemini-flash-latest",
-  systemInstruction: "You are a concise summariser. Return exactly 3 sentences."
+const gaiaClient = new OpenAI({
+  baseURL: process.env.GAIA_BASE_URL || "https://0x3b70c030a2baaa866f6ba6c03fde87706812d920.gaia.domains/v1",
+  apiKey:  process.env.GAIA_API_KEY || "dummy"
 });
 
 // ABIs
@@ -40,7 +39,7 @@ const ERC20_ABI = ["function approve(address spender, uint256 amount) external r
 let requestCounter = 0;
 
 /**
- * Summarize URL using Claude Haiku
+ * Summarize URL using Gaia
  */
 async function summariseUrl(url: string): Promise<string> {
   console.log(`\n🌐 Fetching URL: ${url}`);
@@ -53,10 +52,17 @@ async function summariseUrl(url: string): Promise<string> {
     .trim()
     .substring(0, 3000);
 
-  console.log("  🤖 Requesting summary from Gemini...");
-  const msg = await model.generateContent(`Summarise this:\n\n${cleanText}`);
+  console.log("  🤖 Requesting summary from Gaia...");
+  
+  const result = await gaiaClient.chat.completions.create({
+    model: process.env.GAIA_MODEL || "qwen72b",
+    messages: [
+      { role: "system", content: "You are a concise summariser. Return exactly 3 sentences." },
+      { role: "user", content: `Summarise this:\n\n${cleanText}` }
+    ]
+  });
 
-  return msg.response.text();
+  return result.choices[0].message.content || "";
 }
 
 /**

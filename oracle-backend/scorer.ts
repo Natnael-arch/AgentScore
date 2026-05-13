@@ -146,7 +146,54 @@ async function scoreRepaymentHistory(
 
     return Math.min(192, points);
   } catch (error) {
-    console.error(`    ❌ Error fetching repayment history:`, error);
+    console.warn("[SCORER] Repayment history check failed:", error);
+    return 0;
+  }
+}
+
+async function scoreTradingPerformance(
+  agentAddress: string,
+  provider: ethers.JsonRpcProvider
+): Promise<number> {
+  try {
+    const TRADE_VAULT = "0x30980D5Efd3489B65D3dc0E65b61C01B357a8DBa";
+    const abi = [
+      "event PositionOpened(uint256 indexed id, address indexed agent, string asset, uint8 side, uint256 entryPrice, uint256 size)",
+      "event PositionClosed(uint256 indexed id, uint8 status, uint256 exitPrice, int256 pnl)"
+    ];
+
+    const vault = new ethers.Contract(TRADE_VAULT, abi, provider);
+    const latestBlock = await provider.getBlockNumber();
+    const fromBlock   = Math.max(0, latestBlock - 50000);
+
+    // Get all positions opened by this agent
+    const openFilter = vault.filters.PositionOpened(null, agentAddress);
+    const openEvents = await vault.queryFilter(openFilter, fromBlock);
+
+    if (openEvents.length === 0) return 0;
+
+    // Get all closed positions
+    const closeFilter = vault.filters.PositionClosed();
+    const closeEvents = await vault.queryFilter(closeFilter, fromBlock);
+
+    // Match closes to this agent's opens
+    const agentIds = new Set(openEvents.map(e => (e as any).args.id.toString()));
+    const closes   = closeEvents.filter(e =>
+      agentIds.has((e as any).args.id.toString())
+    );
+
+    const profitable = closes.filter(e =>
+      (e as any).args.status === 2n // CLOSED_PROFIT = 2 in our contract
+    ).length;
+
+    let points = 0;
+    points += Math.min(openEvents.length, 5) * 5;  // up to 25pts for activity
+    points += Math.min(profitable, 3) * 10;         // up to 30pts for profit
+
+    return Math.min(55, points); // max 55 pts (10% weight)
+
+  } catch (err: any) {
+    console.warn("[SCORER] Trading performance unavailable:", err.message);
     return 0;
   }
 }
@@ -246,6 +293,7 @@ export async function computeScoreLegacy(agentAddress: string): Promise<ScoreRes
 
   // 6. Apply weighted formula (base 300, max 850)
   const repaymentPoints = await scoreRepaymentHistory(agentAddress, provider);
+  const tradingPoints   = await scoreTradingPerformance(agentAddress, provider);
   
   // Rescale weights to make room for repayment (35% = 192.5 max points)
   const p_paymentRate = paymentRate * 1.375;               // 25% weight, max 137.5
@@ -254,7 +302,7 @@ export async function computeScoreLegacy(agentAddress: string): Promise<ScoreRes
   const p_diversity = Math.min(diversity, 10) * 8.25;      // 15% weight, max 82.5
   const p_sessions = Math.min(successCount, 10) * 2.75;    // 5% weight, max 27.5
 
-  const totalPoints = repaymentPoints + p_paymentRate + p_txVolume + p_age + p_diversity + p_sessions;
+  const totalPoints = repaymentPoints + p_paymentRate + p_txVolume + p_age + p_diversity + p_sessions + tradingPoints;
   const score = Math.min(850, Math.max(300, Math.round(300 + totalPoints)));
 
   return {
@@ -269,7 +317,8 @@ export async function computeScoreLegacy(agentAddress: string): Promise<ScoreRes
       age: Math.round(p_age),
       diversity: Math.round(p_diversity),
       sessions: Math.round(p_sessions),
-      repayment: Math.round(repaymentPoints)
+      repayment: Math.round(repaymentPoints),
+      trading: Math.round(tradingPoints)
     }
   };
 }
@@ -313,7 +362,7 @@ export async function computeScore(
 
   // SUPPLEMENTARY: on-chain data Passport doesn't have
   const repaymentPoints = await scoreRepaymentHistory(agentAddress, provider);
-  const tradingPoints   = 0; // await scoreTradingPerformance(agentAddress, provider); - not yet implemented
+  const tradingPoints   = await scoreTradingPerformance(agentAddress, provider);
 
   // COMPUTE
   const paymentPoints   = scorePaymentSuccess(passportHistory);

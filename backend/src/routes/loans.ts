@@ -1,13 +1,14 @@
 import { Router } from "express";
 import { supabase } from "../config.js";
-import {
-  assessEligibility,
-  calculateTotalOwed,
-} from "../services/loanEngine.js";
-import { requireAgentSignature } from "../middleware/auth.js";
-import { executeGaslessTransfer } from "../services/gasless.js";
+import { ethers } from "ethers";
 
 export const loansRouter = Router();
+
+const LENDING_POOL_ABI = [
+  "function borrow(uint256 amount) external",
+  "function borrowers(address) external view returns (uint256 borrowedAmount, uint256 lastBorrowTime, uint256 collateralAmount, bool isCollateralLocked, uint256 interestRateBps, uint256 accruedInterest, uint256 lastInterestUpdate)",
+  "function getScore(address) external view returns (uint16 score, uint32 timestamp)"
+];
 
 loansRouter.get("/terms/:address", async (req, res) => {
   try {
@@ -31,98 +32,73 @@ loansRouter.get("/terms/:address", async (req, res) => {
   }
 });
 
-loansRouter.post("/borrow", requireAgentSignature("borrower_address"), async (req, res) => {
+loansRouter.post("/borrow", async (req, res) => {
   try {
-    const { borrower_address, amount } = req.body;
+    const { agentAddress, amount } = req.body;
 
-    if (!borrower_address || !amount || amount <= 0) {
-      return res.status(400).json({ error: "borrower_address and positive amount are required" });
-    }
-
-    const { data: agent } = await supabase
-      .from("agents")
-      .select("score, address")
-      .eq("address", borrower_address)
-      .single();
-
-    if (!agent) {
-      return res.status(404).json({ error: "Agent not found. Register first." });
-    }
-
-    const { data: activeLoan } = await supabase
-      .from("loans")
-      .select("id")
-      .eq("borrower_address", borrower_address)
-      .eq("status", "active")
-      .single();
-
-    if (activeLoan) {
-      return res.status(409).json({ error: "Agent already has an active loan. Repay it first." });
-    }
-
-    const terms = assessEligibility(agent.score);
-
-    if (!terms.eligible) {
-      return res.status(403).json({ error: terms.message || "Not eligible for a loan" });
-    }
-
-    if (amount > terms.maxLoan) {
+    if (!agentAddress || !amount) {
       return res.status(400).json({
-        error: `Amount exceeds maximum loan of $${terms.maxLoan} for your score`,
+        error: "agentAddress and amount are required"
       });
     }
 
-    const totalOwed = calculateTotalOwed(amount, terms.interestRate);
+    const provider = new ethers.JsonRpcProvider(
+      process.env.KITE_RPC_URL!
+    );
 
-    const { data: loan, error } = await supabase
+    // Use agent's own private key to sign the borrow tx
+    // Agent must sign their own borrow — cannot be done on their behalf
+    // Frontend passes signed tx or we use a server signer for demo
+    const signer = new ethers.Wallet(
+      process.env.AGENT_PRIVATE_KEY!,
+      provider
+    );
+
+    const lendingPool = new ethers.Contract(
+      process.env.LENDING_POOL_ADDRESS!,
+      LENDING_POOL_ABI,
+      signer
+    );
+
+    // Check existing loan
+    const borrower = await lendingPool.borrowers(agentAddress);
+    if (borrower.borrowedAmount > 0n) {
+      return res.status(400).json({
+        error: "Agent already has an active loan",
+        borrowed: ethers.formatUnits(borrower.borrowedAmount, 18)
+      });
+    }
+
+    // Execute borrow on-chain
+    const amountWei = ethers.parseUnits(amount.toString(), 18);
+    const tx = await lendingPool.borrow(amountWei);
+    await tx.wait();
+
+    // Update Supabase cache
+    await supabase
       .from("loans")
-      .insert({
-        borrower_address,
-        principal: amount,
-        interest_rate: terms.interestRate,
-        repayment_split: terms.repaymentSplit,
-        total_owed: totalOwed,
-        score_at_origination: agent.score,
-      })
-      .select()
-      .single();
+      .upsert({
+        agent_address:  agentAddress,
+        borrowed_amount: amount,
+        tx_hash:        tx.hash,
+        status:         "active",
+        created_at:     new Date().toISOString()
+      });
 
-    if (error) {
-      console.error("Loan insert error:", error);
-      return res.status(500).json({ error: "Failed to create loan" });
-    }
-
-    // Attempt the Gasless on-chain payout
-    let txHash = null;
-    try {
-      const gaslessResult = await executeGaslessTransfer(borrower_address, amount);
-      txHash = gaslessResult.txHash;
-    } catch (e) {
-      console.error("Failed to execute on-chain payout. Skipping...", e);
-      // Optional: you could fail the whole request, but for a hackathon keeping it resilient is smart
-    }
-
-    // we fetch pool next
-    const { data: pool } = await supabase.from("lending_pool").select("*").single();
-    if (pool) {
-      await supabase
-        .from("lending_pool")
-        .update({ total_borrowed: parseFloat(pool.total_borrowed) + amount })
-        .eq("id", pool.id);
-    }
-
-    res.status(201).json({
-      loan,
-      txHash,
-      terms: {
-        interestRate: terms.interestRate,
-        repaymentSplit: terms.repaymentSplit,
-        totalOwed,
-      },
+    return res.json({
+      success:    true,
+      txHash:     tx.hash,
+      explorerUrl: `https://testnet.kitescan.ai/tx/${tx.hash}`,
+      borrowed:   amount,
+      message:    `Successfully borrowed ${amount} PYUSD from LendingPool`
     });
-  } catch (err) {
-    console.error("POST /loans/borrow error:", err);
-    res.status(500).json({ error: "Internal server error" });
+
+  } catch (err: any) {
+    console.error("[BORROW] Failed:", err.message);
+    return res.status(500).json({
+      error:   "Borrow failed",
+      details: err.message
+    });
   }
 });
 

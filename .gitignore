@@ -19,3 +19,5 @@ deployments/
 # Miscellaneous
 .DS_Store
 *.log
+
+.kite-passport/

@@ -9,14 +9,14 @@ pragma solidity ^0.8.20;
 contract TradeVault {
 
     enum Side   { LONG, SHORT }
-    enum Status { OPEN, CLOSED }
+    enum Status { OPEN, CLOSED, CLOSED_PROFIT, CLOSED_LOSS, CLOSED_TIMEOUT }
 
     struct Position {
         address  agent;
         string   asset;
         Side     side;
         uint256  entryPrice;    // price * 100 (2 decimal fixed-point)
-        uint256  size;          // in wei (18 decimals, e.g. 10 PYUSD = 10e18)
+        uint256  sizeUSDC;      // in wei (18 decimals, e.g. 10 PYUSD = 10e18)
         uint256  openedAt;
         uint256  closedAt;
         uint256  exitPrice;
@@ -37,8 +37,12 @@ contract TradeVault {
     uint256 public lossCount;
     int256  public totalPnl;
 
-    event PositionOpened(uint256 indexed id, address indexed agent, string asset, Side side, uint256 entryPrice, uint256 size);
-    event PositionClosed(uint256 indexed id, int256 pnl, uint256 exitPrice);
+    event PositionOpened(uint256 indexed id, address indexed agent, string asset, Side side, uint256 entryPrice, uint256 sizeUSDC);
+    event PositionClosed(uint256 indexed id, Status status, uint256 exitPrice, int256 pnl);
+
+    uint256 public immutable stopLossBps    = 300;  // 3%
+    uint256 public immutable takeProfitBps  = 500;  // 5%
+    uint256 public immutable maxHoldSeconds = 1800; // 30 minutes
 
     constructor() {
         owner = msg.sender;
@@ -79,7 +83,7 @@ contract TradeVault {
             asset:        asset,
             side:         Side(side),
             entryPrice:   entryPrice,
-            size:         size,
+            sizeUSDC:     size,
             openedAt:     block.timestamp,
             closedAt:     0,
             exitPrice:    0,
@@ -116,6 +120,47 @@ contract TradeVault {
         pos.status      = Status.CLOSED;
         pos.txHashClose = txHash;
 
+        _finalizeClose(id, pnl, exitPrice);
+    }
+
+    function checkAndClose(
+        uint256 id,
+        uint256 currentPrice
+    ) external onlyAuthorized returns (
+        bool closed,
+        Status status,
+        int256 pnl
+    ) {
+        Position storage pos = positions[id];
+        require(pos.status == Status.OPEN, "Position not open");
+
+        int256 priceDelta = int256(currentPrice) - int256(pos.entryPrice);
+        int256 pnlBps = (priceDelta * 10000) / int256(pos.entryPrice);
+
+        bool takeProfit = pnlBps >= int256(takeProfitBps);
+        bool stopLoss   = pnlBps <= -int256(stopLossBps);
+        bool timeout    = block.timestamp >= pos.openedAt + maxHoldSeconds;
+
+        if (!takeProfit && !stopLoss && !timeout) {
+            return (false, Status.OPEN, 0);
+        }
+
+        pnl = (int256(pos.sizeUSDC) * pnlBps) / 10000;
+
+        if (takeProfit)    status = Status.CLOSED_PROFIT;
+        else if (stopLoss) status = Status.CLOSED_LOSS;
+        else               status = Status.CLOSED_TIMEOUT;
+
+        pos.exitPrice = currentPrice;
+        pos.closedAt  = block.timestamp;
+        pos.pnl       = pnl;
+        pos.status    = status;
+
+        _finalizeClose(id, pnl, currentPrice);
+        return (true, status, pnl);
+    }
+
+    function _finalizeClose(uint256 id, int256 pnl, uint256 exitPrice) internal {
         totalPnl += pnl;
         if (pnl >= 0) {
             winCount++;
@@ -132,7 +177,7 @@ contract TradeVault {
             }
         }
 
-        emit PositionClosed(id, pnl, exitPrice);
+        emit PositionClosed(id, positions[id].status, exitPrice, pnl);
     }
 
     /**

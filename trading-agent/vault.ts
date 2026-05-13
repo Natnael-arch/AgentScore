@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 export const VAULT_ABI = [
   "function openPosition(string,uint8,uint256,uint256) external returns (uint256)",
   "function closePosition(uint256,uint256,int256,bytes32) external",
+  "function checkAndClose(uint256,uint256) external returns (bool closed, uint8 status, int256 pnl)",
   "function getOpenPositions() external view returns (uint256[])",
   "function positions(uint256) external view returns (address,string,uint8,uint256,uint256,uint256,uint256,uint256,int256,uint8,bytes32,bytes32)",
   "function getStats() external view returns (uint256,uint256,uint256,uint256,int256,uint256)",
@@ -134,5 +135,35 @@ export async function openPositionWithAA(
     const tx = await vault.openPosition(asset, 0, priceInt, sizeWei);
     await tx.wait();
     return tx.hash;
+  }
+}
+
+export async function checkAndClosePosition(
+  vault: ethers.Contract,
+  positionId: number,
+  currentPrice: number
+): Promise<{ closed: boolean; status: number; pnl: bigint; txHash: string | null }> {
+  try {
+    const currentPriceX100 = Math.round(currentPrice * 100);
+    
+    // 1. Static call to check if it SHOULD close
+    const result = await vault.checkAndClose.staticCall(positionId, currentPriceX100);
+    
+    if (result[0]) { // closed is result.closed or result[0]
+      // 2. Execute transaction
+      const tx = await vault.checkAndClose(positionId, currentPriceX100);
+      const receipt = await tx.wait();
+      return {
+        closed: true,
+        status: Number(result[1]),
+        pnl: result[2],
+        txHash: receipt.hash
+      };
+    }
+    
+    return { closed: false, status: 0, pnl: 0n, txHash: null };
+  } catch (error: any) {
+    console.error(`[VAULT] checkAndClose failed for ${positionId}:`, error.message);
+    return { closed: false, status: 0, pnl: 0n, txHash: null };
   }
 }

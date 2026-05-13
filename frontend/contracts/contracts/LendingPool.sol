@@ -18,6 +18,7 @@ contract LendingPool is Ownable, ReentrancyGuard {
         uint256 depositedAmount;
         uint256 lastDepositTime;
         uint256 earnedInterest;
+        uint256 yieldClaimed;
     }
     
     struct Borrower {
@@ -25,6 +26,9 @@ contract LendingPool is Ownable, ReentrancyGuard {
         uint256 lastBorrowTime;
         uint256 collateralAmount;
         bool isCollateralLocked;
+        uint256 interestRateBps;
+        uint256 accruedInterest;
+        uint256 lastInterestUpdate;
     }
     
     mapping(address => Lender) public lenders;
@@ -37,6 +41,10 @@ contract LendingPool is Ownable, ReentrancyGuard {
     uint256 public totalBorrowed;
     uint256 public interestRate = 500; // 5% annual interest (500 basis points)
     uint256 public baseCollateralRatio = 150; // 150% base collateral ratio
+    
+    uint256 public totalInterestAccrued;
+    uint256 public totalInterestCollected;
+    uint256 public totalYieldPool;
     
     event Deposited(address indexed lender, uint256 amount);
     event Withdrawn(address indexed lender, uint256 amount);
@@ -97,6 +105,8 @@ contract LendingPool is Ownable, ReentrancyGuard {
         lenders[msg.sender].lastDepositTime = block.timestamp;
         totalDeposits += amount;
         
+        lenders[msg.sender].yieldClaimed = (totalYieldPool * lenders[msg.sender].depositedAmount) / totalDeposits;
+        
         emit Deposited(msg.sender, amount);
     }
     
@@ -121,12 +131,37 @@ contract LendingPool is Ownable, ReentrancyGuard {
         lender.lastDepositTime = block.timestamp;
         totalDeposits -= withdrawFromDeposit;
         
+        if (totalDeposits > 0 && lender.depositedAmount > 0) {
+            lender.yieldClaimed = (totalYieldPool * lender.depositedAmount) / totalDeposits;
+        } else {
+            lender.yieldClaimed = 0;
+        }
+        
         // Transfer PYUSD to lender
         require(pyusdToken.transfer(msg.sender, amount), "Transfer failed");
         
         emit Withdrawn(msg.sender, amount);
     }
     
+    function getInterestRateBps(uint16 score) internal pure returns (uint256) {
+        if (score >= 750) return 500;  // 5%
+        if (score >= 700) return 1000; // 10%
+        if (score >= 600) return 1500; // 15%
+        return 2000;                   // 20% for score 500-599
+    }
+
+    function accrueInterest(address borrowerAddr) internal {
+        Borrower storage b = borrowers[borrowerAddr];
+        if (b.borrowedAmount == 0) return;
+
+        uint256 elapsed = block.timestamp - b.lastInterestUpdate;
+        uint256 interest = (b.borrowedAmount * b.interestRateBps * elapsed) / (10000 * 365 days);
+
+        b.accruedInterest += interest;
+        b.lastInterestUpdate = block.timestamp;
+        totalInterestAccrued += interest;
+    }
+
     /**
      * @dev Borrow USDT. 100% Reputation-based (Zero Collateral).
      * Score 800+ => Max 500 USDT
@@ -136,16 +171,22 @@ contract LendingPool is Ownable, ReentrancyGuard {
     function borrow(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be greater than 0");
         
-        (uint16 rawScore, ) = scoreOracle.getScore(msg.sender);
+        (uint16 rawScore, uint32 timestamp) = scoreOracle.getScore(msg.sender);
         uint256 score = uint256(rawScore);
-        uint256 maxBorrowable = 0;
         
+        require(block.timestamp - timestamp <= 7 days, "Score stale");
+        require(score >= 500, "Score too low");
+        
+        uint256 maxBorrowable = 0;
         if (score >= 800) {
             maxBorrowable = 500 * (10**18); // PYUSD uses 18 decimals
         } else if (score >= 700) {
             maxBorrowable = 200 * (10**18);
         } else if (score >= 600) {
             maxBorrowable = 50 * (10**18);
+        } else if (score >= 500) {
+            // Give a tiny allowance for score 500-599 as per requested tier logic
+            maxBorrowable = 10 * (10**18);
         }
         
         require(maxBorrowable > 0, "Credit score too low to borrow");
@@ -158,6 +199,8 @@ contract LendingPool is Ownable, ReentrancyGuard {
             borrowerList.push(msg.sender);
         }
         
+        borrower.interestRateBps = getInterestRateBps(rawScore);
+        borrower.lastInterestUpdate = block.timestamp;
         borrower.borrowedAmount += amount;
         borrower.lastBorrowTime = block.timestamp;
         totalBorrowed += amount;
@@ -173,27 +216,48 @@ contract LendingPool is Ownable, ReentrancyGuard {
     function repay(address _borrower, uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be greater than 0");
         
-        Borrower storage borrower = borrowers[_borrower];
-        require(amount <= borrower.borrowedAmount, "Amount exceeds borrowed amount");
+        accrueInterest(_borrower);
+        Borrower storage b = borrowers[_borrower];
         
-        borrower.borrowedAmount -= amount;
-        totalBorrowed -= amount;
+        require(amount <= b.borrowedAmount + b.accruedInterest, "Amount exceeds total owed");
         
-        if (borrower.borrowedAmount == 0) {
-            borrower.isCollateralLocked = false;
-        }
+        uint256 remaining = amount;
         
         // Transfer PYUSD from caller to this contract
         require(pyusdToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
         
+        // Pay interest first
+        if (b.accruedInterest > 0 && remaining > 0) {
+            uint256 interestPayment = remaining >= b.accruedInterest ? b.accruedInterest : remaining;
+            
+            b.accruedInterest -= interestPayment;
+            totalInterestCollected += interestPayment;
+            remaining -= interestPayment;
+            totalYieldPool += interestPayment;
+            
+            emit InterestPaid(_borrower, interestPayment);
+        }
+        
+        // Then pay principal
+        uint256 principalPayment = 0;
+        if (remaining > 0) {
+            principalPayment = remaining >= b.borrowedAmount ? b.borrowedAmount : remaining;
+            b.borrowedAmount -= principalPayment;
+            totalBorrowed -= principalPayment;
+        }
+        
+        if (b.borrowedAmount == 0) {
+            b.isCollateralLocked = false;
+        }
+        
         emit Repaid(_borrower, amount);
         
-        bool fullyRepaid = (borrower.borrowedAmount == 0);
+        bool fullyRepaid = (b.borrowedAmount == 0);
         uint256 loanId = nextLoanId++; // Simple loan ID for now
         
         emit LoanRepayment(
             _borrower,
-            amount,
+            principalPayment,
             loanId,
             fullyRepaid,
             block.timestamp
@@ -201,7 +265,7 @@ contract LendingPool is Ownable, ReentrancyGuard {
         
         repaymentHistory[_borrower].push(RepaymentRecord({
             loanId: loanId,
-            amount: amount,
+            amount: principalPayment,
             fullyRepaid: fullyRepaid,
             timestamp: block.timestamp
         }));
@@ -218,15 +282,16 @@ contract LendingPool is Ownable, ReentrancyGuard {
         emit CollateralAdded(msg.sender, amount);
     }
     
-    function calculatePendingInterest(address lender) public view returns (uint256) {
-        Lender memory l = lenders[lender];
-        if (l.depositedAmount == 0) return 0;
+    function calculatePendingInterest(address lenderAddr) public view returns (uint256) {
+        Lender storage l = lenders[lenderAddr];
+        if (l.depositedAmount == 0 || totalDeposits == 0) return 0;
         
-        uint256 timeElapsed = block.timestamp - l.lastDepositTime;
-        uint256 annualInterest = (l.depositedAmount * interestRate) / 10000;
-        uint256 pendingInterest = (annualInterest * timeElapsed) / 365 days;
+        uint256 lenderShare = (totalYieldPool * l.depositedAmount) / totalDeposits;
         
-        return pendingInterest;
+        if (lenderShare > l.yieldClaimed) {
+            return lenderShare - l.yieldClaimed;
+        }
+        return 0;
     }
     
     function getLenderPosition(address lender) external view returns (uint256 depositedAmount, uint256 earnedInterest) {

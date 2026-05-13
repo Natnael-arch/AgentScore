@@ -1,19 +1,68 @@
 import express        from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { ethers }     from "ethers";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 import * as dotenv    from "dotenv";
 import { getAgentScore, AgentScoreData, refreshScoreViaPassport, scoreToMaxLoan, scoreToGrade, KitePassportMCPClient } from "./scorer";
-import { getVaultContract, getVaultStats, getOpenPositionDetails, openPositionWithAA, PositionData, VaultStats } from "./vault";
+import { getVaultContract, getVaultStats, getOpenPositionDetails, openPositionWithAA, checkAndClosePosition, PositionData, VaultStats } from "./vault";
 import { GokiteAASDK } from "gokite-aa-sdk";
 dotenv.config();
 
-// ── Providers and wallets ─────────────────────────────────────
-const provider  = new ethers.JsonRpcProvider(
-  process.env.KITE_RPC_URL || "https://rpc-testnet.gokite.ai/"
-);
-const wallet    = new ethers.Wallet(process.env.AGENT_PRIVATE_KEY!, provider);
-const genAI     = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+// ── Resilient Provider + Wallet ───────────────────────────────
+function createProvider(): ethers.JsonRpcProvider {
+  return new ethers.JsonRpcProvider(
+    process.env.KITE_RPC_URL || "https://rpc-testnet.gokite.ai/",
+    { chainId: 2368, name: "kite-testnet" },
+    {
+      polling: true,
+      pollingInterval: 4000,
+      staticNetwork: true // prevents repeated network detection calls
+    }
+  );
+}
+
+let provider = createProvider();
+let wallet   = new ethers.Wallet(process.env.AGENT_PRIVATE_KEY!, provider);
+
+// Wrap every provider call in a retry helper
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries = 3,
+  delayMs = 2000
+): Promise<T> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const isTimeout = err.code === "TIMEOUT" ||
+        err.message?.includes("timeout") ||
+        err.message?.includes("failed to detect network");
+
+      if (isTimeout && i < retries - 1) {
+        console.log(`[RPC] Timeout — reconnecting (attempt ${i + 2}/${retries})...`);
+        provider = createProvider();
+        wallet   = wallet.connect(provider);
+        // Refresh contract instances
+        pyusd = new ethers.Contract(PYUSD, PYUSD_ABI, wallet);
+        lendingPool = new ethers.Contract(process.env.LENDING_POOL_ADDRESS!, LENDING_POOL_ABI, wallet);
+        if (process.env.TRADE_VAULT_ADDRESS) {
+          vault = getVaultContract(process.env.TRADE_VAULT_ADDRESS, wallet);
+        }
+        await new Promise(r => setTimeout(r, delayMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Max retries exceeded");
+}
+
+const gaiaClient = new OpenAI({
+  baseURL: process.env.GAIA_BASE_URL!,
+  apiKey:  process.env.GAIA_API_KEY!
+});
+
+let skipCooldown = 0;
 
 // ── Contract setup ────────────────────────────────────────────
 const PYUSD     = process.env.PYUSD_ADDRESS || "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9";
@@ -26,9 +75,19 @@ const X402_ABI = [
   "function splitPayment(address token, address targetAgent, uint256 amount) external",
   "event PaymentSplit(address indexed from, address indexed to, address indexed token, uint256 totalAmount, uint256 agentPortion, uint256 poolPortion)"
 ];
+const LENDING_POOL_ABI = [
+  "function borrow(uint256 amount) external",
+  "function borrowers(address) external view returns (uint256 borrowedAmount, uint256 lastBorrowTime, uint256 collateralAmount, bool isCollateralLocked, uint256 interestRateBps, uint256 accruedInterest, uint256 lastInterestUpdate)",
+  "function repay(address borrower, uint256 amount) external"
+];
 
-const pyusd = new ethers.Contract(PYUSD, PYUSD_ABI, wallet);
-const vault = process.env.TRADE_VAULT_ADDRESS
+let pyusd = new ethers.Contract(PYUSD, PYUSD_ABI, wallet);
+let lendingPool = new ethers.Contract(
+  process.env.LENDING_POOL_ADDRESS!,
+  LENDING_POOL_ABI,
+  wallet
+);
+let vault = process.env.TRADE_VAULT_ADDRESS
   ? getVaultContract(process.env.TRADE_VAULT_ADDRESS, wallet)
   : null;
 
@@ -47,6 +106,7 @@ interface AgentState {
   status:          "RUNNING" | "WAITING" | "ERROR";
   error:           string | null;
   passport:        { verified: boolean; address: string | null; sessionBudgetRemaining: string | null } | null;
+  loan:            any | null;
 }
 
 let state: AgentState = {
@@ -62,8 +122,98 @@ let state: AgentState = {
   recentTxs:     [],
   status:        "WAITING",
   error:         null,
-  passport:      { verified: false, address: null, sessionBudgetRemaining: null }
+  passport:      { verified: false, address: null, sessionBudgetRemaining: null },
+  loan:          null
 };
+
+interface LoanState {
+  borrowed:    string;
+  interest:    string;
+  total:       string;
+  rateBps:     number;
+  hasLoan:     boolean;
+  txHash:      string | null;
+}
+
+let currentLoan: LoanState = {
+  borrowed: "0",
+  interest: "0",
+  total:    "0",
+  rateBps:  0,
+  hasLoan:  false,
+  txHash:   null
+};
+
+async function initializeLoan(): Promise<void> {
+  try {
+    // Check if loan already exists
+    const borrower = await withRetry(() => lendingPool.borrowers(wallet.address));
+
+    if (borrower.borrowedAmount > 0n) {
+      console.log(`[LOAN] ✅ Existing loan found: ${ethers.formatUnits(borrower.borrowedAmount, 18)} PYUSD`);
+      currentLoan = {
+        borrowed: ethers.formatUnits(borrower.borrowedAmount, 18),
+        interest: ethers.formatUnits(borrower.accruedInterest, 18),
+        total:    ethers.formatUnits(borrower.borrowedAmount + borrower.accruedInterest, 18),
+        rateBps:  Number(borrower.interestRateBps),
+        hasLoan:  true,
+        txHash:   null
+      };
+      return;
+    }
+
+    // No existing loan — get score and borrow
+    const oracleUrl = process.env.ORACLE_API_URL || process.env.SCORE_API_URL;
+    const scoreRes = await withRetry(() => fetch(`${oracleUrl}/score/${wallet.address}/raw`));
+    const scoreData = await scoreRes.json();
+    const score: number = scoreData.score ?? 300;
+    console.log(`[LOAN] Agent score: ${score}`);
+
+    // Determine borrow amount by score tier
+    let borrowAmount: bigint;
+    if      (score >= 750) borrowAmount = ethers.parseUnits("5", 18);
+    else if (score >= 700) borrowAmount = ethers.parseUnits("3", 18);
+    else if (score >= 600) borrowAmount = ethers.parseUnits("2", 18);
+    else if (score >= 500) borrowAmount = ethers.parseUnits("1", 18);
+    else {
+      console.log(`[LOAN] Score too low (${score} < 500) — cannot borrow`);
+      return;
+    }
+
+    // Borrow from LendingPool
+    const tx = await withRetry(() => lendingPool.borrow(borrowAmount));
+    await withRetry(() => tx.wait());
+
+    console.log(`[LOAN] ✅ Borrowed ${ethers.formatUnits(borrowAmount, 18)} PYUSD`);
+    console.log(`[LOAN] tx: https://testnet.kitescan.ai/tx/${tx.hash}`);
+
+    // Update loan state
+    const updated = await withRetry(() => lendingPool.borrowers(wallet.address));
+    currentLoan = {
+      borrowed: ethers.formatUnits(updated.borrowedAmount, 18),
+      interest: ethers.formatUnits(updated.accruedInterest, 18),
+      total:    ethers.formatUnits(updated.borrowedAmount + updated.accruedInterest, 18),
+      rateBps:  Number(updated.interestRateBps),
+      hasLoan:  true,
+      txHash:   tx.hash
+    };
+
+  } catch (err: any) {
+    console.error(`[LOAN] ❌ Borrow failed:`, err.message);
+    console.log(`[LOAN] Continuing with existing wallet balance`);
+  }
+}
+
+async function refreshLoanState(): Promise<void> {
+  if (!currentLoan.hasLoan) return;
+  try {
+    const borrower = await withRetry(() => lendingPool.borrowers(wallet.address));
+    currentLoan.interest = ethers.formatUnits(borrower.accruedInterest, 18);
+    currentLoan.total    = ethers.formatUnits(
+      borrower.borrowedAmount + borrower.accruedInterest, 18
+    );
+  } catch { /* silent — don't break loop */ }
+}
 
 // ── WebSocket server — broadcasts state to dashboard ──────────
 const WS_PORT = Number(process.env.WS_PORT) || 4001;
@@ -78,7 +228,17 @@ wss.on("connection", (ws) => {
 });
 
 function broadcast(update: Partial<AgentState>) {
-  state = { ...state, ...update };
+  state = { ...state, ...update, loan: {
+    borrowed:  currentLoan.borrowed,
+    interest:  currentLoan.interest,
+    total:     currentLoan.total,
+    rateBps:   currentLoan.rateBps,
+    hasLoan:   currentLoan.hasLoan,
+    txHash:    currentLoan.txHash,
+    explorerUrl: currentLoan.txHash
+      ? `https://testnet.kitescan.ai/tx/${currentLoan.txHash}`
+      : null
+  }};
   const msg = JSON.stringify({ type: "state", data: state });
   for (const client of clients) {
     if (client.readyState === WebSocket.OPEN) {
@@ -174,58 +334,59 @@ async function getMarketData() {
   };
 }
 
-// ── Gemini trade signal (candle-based) ────────────────────────
+// ── Gaia trade signal ────────────────────────
 async function getTradeSignal(
   asset: string,
-  analysis: MarketAnalysis
+  currentPrice: number,
+  rsi: number,
+  trend: string,
+  threeCandle: number
 ): Promise<{ side: "LONG" | "SKIP"; reason: string }> {
-  if (!process.env.GEMINI_API_KEY) {
-    return { side: "SKIP", reason: "No Gemini key — set GEMINI_API_KEY" };
+
+  // TEST MODE — bypass AI entirely
+  if (process.env.TEST_FORCE_TRADE === "true") {
+    return {
+      side: "LONG",
+      reason: "Test mode — forced trade to verify full loop"
+    };
   }
 
-  // Format recent candles for the prompt
-  const candleTable = analysis.recentCandles.map(c =>
-    `  ${new Date(c.time).toISOString().slice(11,19)} | O:${c.open.toFixed(2)} H:${c.high.toFixed(2)} L:${c.low.toFixed(2)} C:${c.close.toFixed(2)}`
-  ).join("\n");
+  // SKIP cooldown — don't waste API calls
+  if (skipCooldown > 0) {
+    skipCooldown--;
+    console.log(`[SIGNAL] Cooldown — ${skipCooldown} loops remaining`);
+    return { side: "SKIP", reason: "Cooldown active" };
+  }
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const response = await gaiaClient.chat.completions.create({
+      model: process.env.GAIA_MODEL!,
+      max_tokens: 60,
+      messages: [
+        {
+          role: "system",
+          content: "You are a trading signal AI. Respond ONLY with valid JSON. No explanation, no markdown."
+        },
+        {
+          role: "user",
+          content: `Asset: ${asset} @ $${currentPrice}
+RSI: ${rsi} | Trend: ${trend} | 3-candle change: ${threeCandle}%
+Rules: LONG if RSI<65 and momentum positive. SKIP if RSI>70 or trend DOWN.
+Respond ONLY: {"side":"LONG" or "SKIP","reason":"max 10 words"}`
+        }
+      ]
+    });
 
-    const prompt = `You are an autonomous trading agent on Kite AI blockchain.
-You make decisions on 4-minute candles. Here is the current market data:
+    const text = response.choices[0].message.content?.trim() || "";
+    const signal = JSON.parse(text);
 
-Asset: ${asset}
-Current Price: $${analysis.price.toFixed(2)}
-Last candle change: ${analysis.change4m.toFixed(3)}%
-3-candle change (12min): ${analysis.change12m.toFixed(3)}%
-RSI(14): ${analysis.rsi.toFixed(1)}
-Short-term trend: ${analysis.trend}
+    if (signal.side === "SKIP") skipCooldown = 3;
 
-Recent candles (time | OHLC):
-${candleTable}
+    return signal;
 
-Rules:
-- Capital at risk: $10 PYUSD per trade
-- Stop loss: 3% | Take profit: 5%
-- Go LONG if: RSI < 65 AND (3-candle change > 0.15% OR trend is UP with momentum)
-- SKIP if: RSI > 70 (overbought) OR trend is DOWN OR momentum is flat/weak
-- Be decisive — a mild uptrend with consistent green candles IS tradeable
-
-Return ONLY valid JSON: {"side":"LONG" or "SKIP","reason":"max 15 words"}`;
-
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-
-    const startIndex = text.indexOf('{');
-    const endIndex = text.lastIndexOf('}');
-    if (startIndex !== -1 && endIndex !== -1) {
-      const clean = text.substring(startIndex, endIndex + 1);
-      return JSON.parse(clean);
-    }
-    throw new Error("No JSON found in response");
-  } catch (e: any) {
-    console.error(`Gemini Error: ${e.message}`);
-    return { side: "SKIP", reason: "Gemini error — skipping" };
+  } catch (err: any) {
+    console.error("[SIGNAL] Gaia API error:", err.message);
+    return { side: "SKIP", reason: "API error — skipping" };
   }
 }
 
@@ -240,56 +401,40 @@ async function openPosition(
   const priceInt = Math.round(price * 100);
   const sizeWei  = ethers.parseEther("10"); // $10 per trade
 
-  const txHash = await openPositionWithAA(
+  const txHash = await withRetry(() => openPositionWithAA(
     vaultAddr, wallet, asset, priceInt, sizeWei
-  );
+  ));
 
   console.log(`[OPEN] LONG ${asset} @ $${price} | tx: ${txHash}`);
   console.log(`       https://testnet.kitescan.ai/tx/${txHash}`);
   addTx(txHash, `OPEN LONG ${asset} @ $${price.toFixed(2)}`);
 }
 
-// ── Check and close positions ─────────────────────────────────
+// ── Check and close positions on-chain ────────────────────────
 async function managePositions(
   prices: Record<string, MarketAnalysis>
 ): Promise<void> {
   if (!vault) return;
-  const positions = await getOpenPositionDetails(vault);
+  const positions = await withRetry(() => getOpenPositionDetails(vault));
 
   for (const pos of positions) {
     const currentPrice = prices[pos.asset]?.price ?? 0;
     if (!currentPrice) continue;
 
-    const priceDiff  = (currentPrice - pos.entryPrice) / pos.entryPrice;
-    const ageMinutes = (Date.now() / 1000 - pos.openedAt) / 60;
-    const shouldClose =
-      priceDiff >=  0.05 ||  // take profit
-      priceDiff <= -0.03 ||  // stop loss
-      ageMinutes >= 30;       // timeout
+    const result = await withRetry(() => checkAndClosePosition(vault, pos.id, currentPrice));
 
-    if (!shouldClose) continue;
+    if (result.closed) {
+      const pnlDisplay = ethers.formatUnits(result.pnl, 18);
+      const label      = result.pnl >= 0n ? `+${pnlDisplay}` : pnlDisplay;
+      console.log(`[CLOSE] Position ${pos.id} closed on-chain | P&L: ${label} PYUSD | tx: ${result.txHash}`);
+      addTx(result.txHash!, `CLOSE ${pos.asset} P&L: ${label} PYUSD`);
 
-    const exitPriceInt = Math.round(currentPrice * 100);
-    const pnlWei       = ethers.parseEther(
-      (pos.sizeUSDC * priceDiff).toFixed(6)
-    );
-    const fakeTxBytes  = ethers.zeroPadBytes(
-      ethers.toUtf8Bytes(`close-${pos.id}-${Date.now()}`), 32
-    );
-
-    const tx = await vault.closePosition(pos.id, exitPriceInt, pnlWei, fakeTxBytes);
-    await tx.wait();
-
-    const pnlDisplay = (pos.sizeUSDC * priceDiff).toFixed(4);
-    const label      = priceDiff >= 0 ? `+${pnlDisplay}` : pnlDisplay;
-    console.log(`[CLOSE] Position ${pos.id} | P&L: ${label} PYUSD | tx: ${tx.hash}`);
-    addTx(tx.hash, `CLOSE ${pos.asset} P&L: ${label} PYUSD`);
-
-    // Route profit through X402Processor (30% pool / 70% agent)
-    if (priceDiff > 0 && process.env.X402_PROCESSOR_ADDRESS) {
-      await settlePnl(pnlWei);
-    } else if (priceDiff <= 0) {
-      console.log(`[REPAY] Position closed at loss — no repayment this cycle`);
+      // Route profit through X402Processor (30% pool / 70% agent)
+      if (result.pnl > 0n && process.env.X402_PROCESSOR_ADDRESS) {
+        await settlePnl(result.pnl);
+      } else if (result.pnl <= 0n) {
+        console.log(`[REPAY] Position closed at loss or break-even — no repayment this cycle`);
+      }
     }
   }
 }
@@ -303,26 +448,26 @@ async function settlePnl(amount: bigint): Promise<void> {
     );
 
     // Check allowance before approving — never double-approve
-    const allowance = await pyusd.allowance(
+    const allowance = await withRetry(() => pyusd.allowance(
       wallet.address,
-      process.env.X402_PROCESSOR_ADDRESS
-    );
+      process.env.X402_PROCESSOR_ADDRESS!
+    ));
     if (allowance < amount) {
-      const approveTx = await pyusd.approve(
-        process.env.X402_PROCESSOR_ADDRESS,
+      const approveTx = await withRetry(() => pyusd.approve(
+        process.env.X402_PROCESSOR_ADDRESS!,
         ethers.MaxUint256
-      );
-      await approveTx.wait();
+      ));
+      await withRetry(() => approveTx.wait());
       console.log(`[REPAY] ✅ PYUSD approved for X402Processor`);
     }
 
     // Send full profit — contract splits 30% pool / 70% agent
-    const tx = await x402.splitPayment(
+    const tx = await withRetry(() => x402.splitPayment(
       PYUSD,           // token
       wallet.address,  // targetAgent
       amount           // full profit amount
-    );
-    await tx.wait();
+    ));
+    await withRetry(() => tx.wait());
 
     // Display only — actual split enforced by contract
     const total   = ethers.formatUnits(amount, 18);
@@ -362,6 +507,8 @@ async function settlePnl(amount: bigint): Promise<void> {
 
 // ── Main trading loop ─────────────────────────────────────────
 async function tradingLoop(): Promise<void> {
+  await refreshLoanState();
+
   state.loopCount++;
   broadcast({ status: "RUNNING", error: null, loopCount: state.loopCount });
 
@@ -377,35 +524,35 @@ async function tradingLoop(): Promise<void> {
 
     // 3. Refresh vault stats and open positions
     if (vault) {
-      const [stats, positions] = await Promise.all([
+      const [stats, positions] = await withRetry(() => Promise.all([
         getVaultStats(vault),
         getOpenPositionDetails(vault)
-      ]);
+      ]));
       broadcast({ vaultStats: stats, openPositions: positions });
     }
 
     // 4. Open new trade if no open positions
     if (state.openPositions.length === 0) {
-      // TEST MODE — forces immediate LONG, bypasses Gemini
+      // TEST MODE — forces immediate LONG, bypasses AI
       const TEST_FORCE_TRADE = process.env.TEST_FORCE_TRADE === 'true';
 
       const { side, reason } = TEST_FORCE_TRADE
         ? { side: 'LONG' as const, reason: 'Test mode — forced trade to verify full loop' }
-        : await getTradeSignal("ETH", prices.ETH);
+        : await getTradeSignal("ETH", prices.ETH.price, prices.ETH.rsi, prices.ETH.trend, prices.ETH.change12m);
       
       broadcast({ lastSignal: { asset: "ETH", side, reason } });
       console.log(`[SIGNAL] ETH: ${side} — ${reason}`);
 
       if (side === "LONG") {
         await openPosition("ETH", prices.ETH.price);
-        const positions = vault ? await getOpenPositionDetails(vault) : [];
+        const positions = vault ? await withRetry(() => getOpenPositionDetails(vault)) : [];
         broadcast({ openPositions: positions });
       }
     }
 
     // 5. Refresh agent score every 5 loops
     if (state.loopCount % 5 === 0) {
-      const result = await refreshScoreViaPassport(wallet.address);
+      const result = await withRetry(() => refreshScoreViaPassport(wallet.address));
       if (result) {
         const scoreData = {
           score:        result.score        ?? 300,
@@ -494,12 +641,14 @@ async function start() {
   }
 
   // Initial score fetch
-  const scoreData = await getAgentScore(wallet.address);
+  const scoreData = await withRetry(() => getAgentScore(wallet.address));
   broadcast({ scoreData });
 
-  // Run immediately then every 3 minutes
+  await initializeLoan();
+
+  // Run immediately then every 5 minutes
   await tradingLoop();
-  setInterval(tradingLoop, 4 * 60 * 1000); // 4-minute candle interval
+  setInterval(tradingLoop, 5 * 60 * 1000); // 5-minute candle interval
 }
 
 start().catch(console.error);

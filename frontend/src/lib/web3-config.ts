@@ -25,9 +25,9 @@ export const kiteTestnet = defineChain({
 });
 
 export const PYUSD_ADDRESS = '0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9' as const;
-export const LENDING_POOL_ADDRESS = '0xe33C3703a1E57E47bAc55d6c45e796b0c313F9Eb' as const;
+export const LENDING_POOL_ADDRESS = '0x16c110a07640831b98EF82dFFa3D2eBF8c8067dE' as const;
 export const AGENT_REGISTRY_ADDRESS = '0xF04B3a11db07d206F61Bf08645169793cbD442C3' as const;
-export const X402_PROCESSOR_ADDRESS = '0x92d37FF0f429c825641220A933AC69AA9A03C73F' as const;
+export const X402_PROCESSOR_ADDRESS = '0x18BE09e6986B61eAa7Cbe4fA21Df1b512DDFc252' as const;
 
 export const config = createConfig({
   chains: [kiteTestnet],
