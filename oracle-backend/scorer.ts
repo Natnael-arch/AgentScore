@@ -106,6 +106,7 @@ export interface ScoreResult {
     diversity: number;
     sessions: number;
     repayment: number;
+    trading: number;
   };
 }
 
@@ -336,7 +337,8 @@ function emptyScore(): ScoreResult {
       age: 0,
       diversity: 0,
       sessions: 0,
-      repayment: 0
+      repayment: 0,
+      trading: 0
     }
   };
 }
