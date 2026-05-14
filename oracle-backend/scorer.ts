@@ -261,7 +261,7 @@ export async function computeScoreLegacy(agentAddress: string): Promise<ScoreRes
 
   // 3. Scan for Repaid events to boost score for debt repayment
   try {
-    const addressPath = path.resolve(process.cwd(), "../frontend/contracts/deployed-addresses.json");
+    const addressPath = path.resolve(process.cwd(), "deployed-addresses.json");
     if (fs.existsSync(addressPath)) {
       const addresses = JSON.parse(fs.readFileSync(addressPath, "utf8"));
       if (addresses.lendingPool) {

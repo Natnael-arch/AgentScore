@@ -142,11 +142,9 @@ app.get("/score/:addr/raw", async (req, res) => {
 });
 
 console.log("--- ATTEMPTING TO LISTEN ---");
-if (process.env.NODE_ENV !== "production" || process.env.LOCAL_DEV === "true") {
-  app.listen(Number(PORT), "0.0.0.0", () => {
-    console.log(`🚀 AgentScore API listening on port ${PORT}`);
-    console.log(`Oracle Wallet: ${ORACLE_WALLET}`);
-  });
-}
+app.listen(Number(PORT), "0.0.0.0", () => {
+  console.log(`🚀 AgentScore API listening on port ${PORT}`);
+  console.log(`Oracle Wallet: ${ORACLE_WALLET}`);
+});
 
 export default app;
