@@ -53,38 +53,49 @@ app.get("/score/:addr", async (req, res) => {
   if (!paymentHeader) {
     // Return 402 Required Payment
     return res.status(402).json({
-      "error": "X-PAYMENT header is required",
-      "accepts": [{
-        "scheme": "gokite-aa",
-        "network": "kite-testnet",
-        "maxAmountRequired": "10000000000000000",
-        "resource": `https://agentscore.onrender.com/score/${addr}`,
-        "description": "AgentScore Oracle — verifiable on-chain credit score for Kite AI agents",
-        "mimeType": "application/json",
-        "outputSchema": {
-          "input": {
-            "discoverable": true,
-            "method": "GET",
-            "type": "http"
+      x402Version: 1,
+      accepts: [{
+        scheme:           "gokite-aa",
+        network:          "kite-testnet",
+        maxAmountRequired: "10000000000000000",
+        resource:         `https://agentscore.onrender.com/score/${addr}`,
+        description:      "AgentScore Oracle — verifiable on-chain credit score",
+        mimeType:         "application/json",
+        payTo:            "0x55d829A66BB1D9f82923cBDEe355249EE5940365",
+        maxTimeoutSeconds: 300,
+        asset:            "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9",
+        extra:            null,
+        merchantName:     "KiteCredit AgentScore Oracle",
+        outputSchema: {
+          input: {
+            discoverable: true,
+            method:       "GET",
+            type:         "http"
           },
-          "output": {
-            "properties": {
-              "score": { "type": "number", "description": "Credit score 300-850" },
-              "grade": { "type": "string", "description": "New/Poor/Fair/Good/Excellent" },
-              "attestationTx": { "type": "string", "description": "Kite chain tx hash" },
-              "explorerUrl": { "type": "string", "description": "Kite explorer link" }
+          output: {
+            type: "object",
+            properties: {
+              score: {
+                type:        "number",
+                description: "Credit score 300-850"
+              },
+              grade: {
+                type:        "string",
+                description: "New/Poor/Fair/Good/Excellent"
+              },
+              attestationTx: {
+                type:        "string",
+                description: "Kite chain attestation tx hash"
+              },
+              explorerUrl: {
+                type:        "string",
+                description: "KiteScan explorer link"
+              }
             },
-            "required": ["score", "grade", "attestationTx"],
-            "type": "object"
+            required: ["score", "attestationTx"]
           }
-        },
-        "payTo": "0x55d829A66BB1D9f82923cBDEe355249EE5940365",
-        "maxTimeoutSeconds": 300,
-        "asset": "0x8E04D099b1a8Dd20E6caD4b2Ab2B405B98242ec9",
-        "extra": null,
-        "merchantName": "KiteCredit AgentScore Oracle"
-      }],
-      "x402Version": 1
+        }
+      }]
     });
   }
 
