@@ -32,10 +32,12 @@ export async function startIndexer() {
   setInterval(async () => {
     try {
       const currentBlock = await provider.getBlockNumber();
-      if (currentBlock <= lastProcessedBlock) return;
+      // Keep a 1-block safety buffer behind the latest block to avoid RPC coalescing/unaccepted block errors
+      const safeLatestBlock = currentBlock > 0 ? currentBlock - 1 : currentBlock;
+      if (safeLatestBlock <= lastProcessedBlock) return;
 
       const fromBlock = lastProcessedBlock + 1;
-      const toBlock = currentBlock;
+      const toBlock = safeLatestBlock;
 
       // 1. Scan for ScoreAttested (Replaces Registration and ScoreUpdated)
       const scoreLogs = await agentScoreAttestation.queryFilter("ScoreAttested", fromBlock, toBlock);
