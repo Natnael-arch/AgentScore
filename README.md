@@ -2,11 +2,12 @@
 
 > **Decentralized Credit & Lending Protocol for Autonomous AI Agents on the Kite AI Testnet**
 
-KiteCredit bridges human liquidity providers with autonomous AI trading bots through a fully on-chain, reputation-based credit system. Agents earn a verifiable credit score (AgentScore) based on their on-chain history, enabling them to borrow PYUSD from a shared lending pool — with zero collateral required.
+KiteCredit bridges human liquidity providers with **any autonomous AI agent** (trading bots, AI developers, creator agents, autonomous workflow coordinators, etc.) through a fully on-chain, reputation-based credit system. Agents earn a verifiable credit score (AgentScore) based on their on-chain history, enabling them to borrow PYUSD from a shared lending pool — with zero collateral required.
 
 [![Network](https://img.shields.io/badge/Network-Kite%20AI%20Testnet-blue)](https://testnet.kitescan.ai)
 [![Chain ID](https://img.shields.io/badge/Chain%20ID-2368-blue)](https://rpc-testnet.gokite.ai)
 [![PYUSD](https://img.shields.io/badge/Token-PYUSD-green)](https://testnet.kitescan.ai)
+[![Frontend](https://img.shields.io/badge/DApp-frontend--beryl--iota--43.vercel.app-blue?logo=vercel)](https://frontend-beryl-iota-43.vercel.app)
 
 ---
 
@@ -20,7 +21,7 @@ Full technical documentation, architectural deep dives, and component references
 
 ## 🏗 System Architecture
 
-The KiteCredit ecosystem is a **5-component microservices architecture** deployed across smart contracts, an Express API backend, a React frontend, a standalone oracle, and an autonomous trading agent.
+The KiteCredit ecosystem is a **5-component microservices architecture** deployed across smart contracts, an Express API backend, a React frontend, a standalone oracle, and a sample autonomous agent implementation (`/trading-agent`).
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -33,9 +34,9 @@ The KiteCredit ecosystem is a **5-component microservices architecture** deploye
          ▲              ▲                        ▲
          │              │                        │
 ┌────────┴─────┐  ┌─────┴──────┐  ┌─────────────┴──────────┐
-│   /backend   │  │  /oracle-  │  │    /trading-agent       │
-│ Node/Express │  │  backend   │  │  (Autonomous Bot + WS)  │
-│  + Indexer   │  │  + Scorer  │  │  + Account Abstraction  │
+│   /backend   │  │  /oracle-  │  │    /trading-agent      │
+│ Node/Express │  │  backend   │  │ (Sample Autonomous Bot)│
+│  + Indexer   │  │  + Scorer  │  │ + Account Abstraction  │
 └──────┬───────┘  └────────────┘  └────────────────────────┘
        │
 ┌──────┴───────┐
@@ -110,18 +111,18 @@ An independent credit scoring microservice gated behind the **X402 payment stand
 
 ---
 
-### 5. Autonomous Trading Agent (`/trading-agent`)
+### 5. Sample Autonomous Agent (`/trading-agent`)
 
 **Stack**: Node.js + TypeScript + Ethers.js v6 + `gokite-aa-sdk` + WebSocket Server
 
-An autonomous bot designed to simulate the role of an AI borrower in the protocol.
+A reference implementation of an autonomous AI agent designed to simulate an AI borrower in the protocol. While this sample demonstrates a trading agent using RSI/momentum signals, the protocol is fully generalized to support **ANY reputable AI agent** (e.g., AI Dev agents paying for gas/APIs, AI Creator agents renting compute, etc.).
 
 **Key Features**:
-- Uses `gokite-aa-sdk` (Account Abstraction) to execute on-chain trades via a smart wallet.
+- Uses `gokite-aa-sdk` (Account Abstraction) to execute on-chain transactions via a smart wallet.
 - Evaluates market conditions using the **KiteCredit Signal Engine v1** — a deterministic RSI and momentum-based strategy on live ETH OHLC data from the CoinGecko API.
   - *Signal triggers: RSI < 35 (mean-reversion) or Uptrend confirmed with RSI < 60 (momentum entry).*
 - Fetches its score from the oracle, then borrows PYUSD from `LendingPool.sol` based on its credit tier.
-- Routes profitable trade closures through the `X402Processor` for automatic 70/30 profit splitting.
+- Routes profitable task closures through the `X402Processor` for automatic 70/30 profit splitting.
 - Integrates the **Kite Passport MCP (Model Context Protocol) Client** to sign oracle payment requests with an active session.
 - Broadcasts real-time state via a **WebSocket server** (port 4001) to the trading dashboard UI (`/trading-agent/dashboard`).
 - Refreshes its on-chain score attestation every 5 trading loops (~5 minutes).
@@ -137,8 +138,8 @@ An autonomous bot designed to simulate the role of an AI borrower in the protoco
 2. [Register] Agent wallet registered → Backend checks Kite Passport MCP session
 3. [Score]    Oracle computes 6-factor AgentScore → Attests to AgentScoreAttestation.sol
 4. [Borrow]   Agent requests loan → LendingPool reads score → PYUSD disbursed
-5. [Trade]    Agent trades ETH using RSI/momentum signals via Account Abstraction
-6. [Repay]    Profit routed via X402Processor → 30% pool, 70% agent (auto-split on-chain)
+5. [Action]   Agent executes its core work (e.g., trading ETH, calling paid APIs, renting compute)
+6. [Repay]    Revenue generated by the agent is routed via X402Processor → 30% pool, 70% agent (auto-split on-chain)
 7. [Yield]    Lenders see Interest Earned grow → Withdraw principal + yield anytime
 ```
 
@@ -154,7 +155,7 @@ Scores range from **300 (minimum)** to **850 (maximum)**. Computed using a 6-fac
 | Payment Success Rate | 25% | 137 pts | Kite Passport API |
 | Service Diversity | 15% | 82 pts | Kite Passport API (unique payees) |
 | Account Age | 10% | 55 pts | Kite Passport API |
-| Trading Performance | 10% | 55 pts | `TradeVault.sol` on-chain events |
+| Task/Trading Performance | 10% | 55 pts | `TradeVault.sol` / On-chain events |
 | Session Discipline | 5% | 27 pts | Kite Passport API (budget adherence) |
 
 ### Credit Tiers & Borrowing Limits
@@ -230,7 +231,7 @@ npx tsx server.ts
 ```
 > Oracle runs on `http://localhost:3001`
 
-**5. Run the Trading Agent** *(Optional — simulates an AI borrower)*
+**5. Run the Sample Autonomous Agent** *(Optional — simulates an AI borrower)*
 ```bash
 cd trading-agent
 npm install
@@ -275,7 +276,7 @@ Create two separate **Web Services** on [render.com](https://render.com):
 - **Testnet Only**: This platform is deployed on the Kite AI Testnet. Do not use real funds.
 - **RPC Connectivity**: The backend indexer and trading agent will continuously log `ENOTFOUND` / `TIMEOUT` errors if the Kite Testnet RPC is unreachable. The system is resilient (it will auto-retry) but cannot function without chain access.
 - **CSS Build Warning**: The frontend has a known `@import` order warning in `index.css` where the Google Fonts `@import` appears after `@tailwind` directives. This is non-blocking but should be fixed for production.
-- **Trading Agent**: Currently uses a deterministic RSI/momentum strategy. There is no live LLM integration in the codebase.
+- **Sample Agent**: The provided `/trading-agent` is a reference implementation using a deterministic RSI/momentum strategy. In production, any agent framework (LangChain, Eliza, ElizaOS, AutoGPT) can integrate with KiteCredit.
 - **Score Staleness**: Agent scores expire after 7 days. The oracle must be running to issue fresh attestations.
 - **Single Oracle**: The system uses a single trusted oracle signer, which is a centralization risk for production deployments.
 
