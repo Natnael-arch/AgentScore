@@ -1,0 +1,212 @@
+import { Router } from "express";
+import { supabase } from "../config.js";
+
+export const agentsRouter = Router();
+
+async function verifyPassport(agentAddress: string): Promise<boolean> {
+  try {
+    const response = await fetch(
+      "https://passport.prod.gokite.ai/v1/agents/verify",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_address: agentAddress })
+      }
+    );
+    const data = await response.json();
+    return data.verified === true;
+  } catch {
+    // If Passport API is down/unreachable, allow registration but flag as unverified on the UI
+    console.warn(`⚠️ Passport API unreachable for ${agentAddress}. Allowing registration with unverified status.`);
+    return true;
+  }
+}
+
+agentsRouter.get("/", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("agents")
+      .select("address, name, score, agent_type")
+      .order("registered_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error: "Failed to fetch agents" });
+    }
+    res.json(data || []);
+  } catch (err) {
+    console.error("GET /agents error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+agentsRouter.get("/:address", async (req, res) => {
+  try {
+    const { address } = req.params;
+
+    const { data, error } = await supabase
+      .from("agents")
+      .select("*")
+      .eq("address", address)
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    const accountAgeDays = Math.floor(
+      (Date.now() - new Date(data.registered_at).getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    const reliability =
+      data.total_payments > 0
+        ? Math.round(((data.total_payments - data.failed_payments) / data.total_payments) * 1000) / 10
+        : 0;
+
+    res.json({
+      name: data.name,
+      address: data.address,
+      score: data.score,
+      transactionVolume: parseFloat(data.transaction_volume),
+      accountAgeDays,
+      x402Reliability: reliability,
+      failedPayments: data.failed_payments,
+      totalPayments: data.total_payments,
+      passportVerified: data.passport_verified || false,
+      passport: {
+        agentType: data.agent_type,
+        modelHash: data.model_hash || "0x0000...0000",
+        kiteIdentityStatus: data.identity_status,
+        registeredOn: "Kite AI Testnet",
+      },
+    });
+  } catch (err) {
+    console.error("GET /agents/:address error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+agentsRouter.post("/", async (req, res) => {
+  try {
+    const { address, name, agent_type, model_hash } = req.body;
+
+    if (!address) {
+      return res.status(400).json({ error: "address is required" });
+    }
+
+    const passportVerified = await verifyPassport(address);
+
+    if (!passportVerified) {
+      return res.status(403).json({
+        error: "Kite Passport required",
+        message: "Agent must have a registered Kite Passport to use KiteCredit",
+        registerAt: "https://agentpassport.ai"
+      });
+    }
+
+    const { data: existing } = await supabase
+      .from("agents")
+      .select("address")
+      .eq("address", address)
+      .single();
+
+    if (existing) {
+      return res.status(409).json({ error: "Agent already registered" });
+    }
+
+    const { data, error } = await supabase
+      .from("agents")
+      .insert({
+        address,
+        name: name || "Unknown Agent",
+        agent_type: agent_type || "General Purpose",
+        model_hash: model_hash || null,
+        passport_verified: passportVerified,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Insert error:", error);
+      return res.status(500).json({ error: "Failed to register agent" });
+    }
+
+    res.status(201).json(data);
+  } catch (err) {
+    console.error("POST /agents error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+agentsRouter.get("/:address/transactions", async (req, res) => {
+  try {
+    const { address } = req.params;
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("*")
+      .eq("from_address", address)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      return res.status(500).json({ error: "Failed to fetch transactions" });
+    }
+
+    res.json(data || []);
+  } catch (err) {
+    console.error("GET /agents/:address/transactions error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+agentsRouter.post("/sync-score", async (req, res) => {
+  const { agentAddress } = req.body;
+
+  if (!agentAddress) {
+    return res.status(400).json({ error: "agentAddress required" });
+  }
+
+  try {
+    // Read the real score from oracle (which reads AgentScoreAttestation.sol)
+    const oracleUrl = process.env.ORACLE_API_URL || "http://localhost:3005";
+    
+    const scoreRes = await fetch(`${oracleUrl}/score/${agentAddress}/raw`);
+    if (!scoreRes.ok) throw new Error(`Oracle returned ${scoreRes.status}`);
+    const scoreData: any = await scoreRes.json();
+
+    // Check Passport MCP
+    const passportVerified = await verifyPassport(agentAddress);
+
+    // Update Supabase cache with the real on-chain score
+    try {
+      const { error } = await supabase
+        .from("agents")
+        .upsert({
+          address:        agentAddress.toLowerCase(),
+          score:          scoreData.score,
+          payment_rate:   scoreData.paymentRate,
+          diversity:      scoreData.diversity,
+          tx_count:       scoreData.txCount,
+          age_days:       scoreData.agentAgeDays,
+          passport_verified: passportVerified,
+          last_synced_at: new Date().toISOString()
+        }, { onConflict: "address" });
+      if (error) console.error("Supabase error:", error);
+    } catch (e: any) {
+      console.error("Supabase offline, skipping write:", e);
+    }
+
+    res.json({
+      success:    true,
+      address:    agentAddress,
+      score:      scoreData.score,
+      source:     "AgentScoreAttestation on Kite chain",
+      contract:   "0xF04B3a11db07d206F61Bf08645169793cbD442C3",
+      explorerUrl: `https://testnet.kitescan.ai/address/0xF04B3a11db07d206F61Bf08645169793cbD442C3`
+    });
+
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});

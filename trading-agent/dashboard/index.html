@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KiteCredit Trading Dashboard</title>
+  <style>
+    :root {
+      --bg:      #0a0e1a;   /* outer background — deep navy */
+      --bg2:     #0f1629;   /* panel background */
+      --bg3:     #141d35;   /* card background */
+      --bg4:     #1a2544;   /* input / track background */
+
+      --blue:    #3b82f6;   /* primary accent — UI elements */
+      --blue2:   #1d4ed8;   /* darker blue */
+      --blue3:   #93c5fd;   /* light blue — links, addresses */
+
+      --green:   #10b981;   /* PROFIT ONLY */
+      --green2:  #6ee7b7;   /* light green */
+
+      --red:     #ef4444;   /* LOSS ONLY */
+      --red2:    #fca5a5;   /* light red */
+
+      --amber:   #f59e0b;   /* warnings, timeouts */
+      --amber2:  #fcd34d;
+
+      --text:    #f1f5f9;   /* primary text */
+      --text2:   #94a3b8;   /* secondary text */
+      --text3:   #475569;   /* muted / labels */
+
+      --border:  #1e3050;   /* subtle border */
+      --border2: #243a5e;   /* card border */
+
+      --mono: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+      height: 100vh;
+      width: 100vw;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    .dashboard {
+      width: 100%;
+      height: 100%;
+      background: var(--bg2);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+    }
+    .logo {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .live-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    
+    .chain-badge {
+      background: var(--blue2);
+      color: var(--text);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Grid Layout */
+    .grid-container {
+      display: flex;
+      flex: 1;
+      gap: 1px;
+      background: var(--border); /* Creates hairline dividers */
+    }
+
+    .col-left { width: 200px; background: var(--bg2); display: flex; flex-direction: column; }
+    .col-center { flex: 1; background: var(--bg2); display: flex; flex-direction: column; overflow: hidden; }
+    .col-right { width: 220px; background: var(--bg2); display: flex; flex-direction: column; overflow-y: auto; }
+
+    .panel-section { padding: 14px; }
+    
+    .sec-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text3);
+      margin-bottom: 8px;
+    }
+
+    /* Score Ring */
+    .score-ring {
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      background: var(--bg3);
+      padding: 16px;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    /* Capital Card */
+    .cap-row {
+      display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;
+    }
+    .cap-row .label { color: var(--text3); }
+
+    /* Badges */
+    .badge {
+      font-size: 10px; padding: 2px 6px; border-radius: 4px; display: inline-block;
+    }
+    .badge-red { background: #ef444420; color: var(--red2); }
+    .badge-green { background: #10b98120; color: var(--green2); }
+    .badge-amber { background: #f59e0b20; color: var(--amber2); }
+    .badge-blue { background: #3b82f620; color: var(--blue3); }
+    
+    /* Center Panel */
+    .chart-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+    }
+    .chart-container { flex: 1; position: relative; padding: 10px; }
+
+    /* Open Positions */
+    .positions-panel {
+      padding: 10px 14px; border-top: 1px solid var(--border); height: 180px; overflow-y: auto;
+    }
+
+    /* Right Panel */
+    .tx-feed { flex: 1; overflow-y: auto; padding-right: 4px; }
+    
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  </style>
+</head>
+<body>
+  <div class="dashboard">
+    <!-- Full-width header bar -->
+    <div class="header">
+      <!-- Left: Logo + live indicator -->
+      <div style="display:flex;align-items:center;gap:16px">
+        <div class="logo">Kite<span style="color:var(--blue)">Credit</span>
+          <span style="color:var(--text3);font-size:11px;font-weight:400">/ Trading Agent</span>
+          <span id="demo-badge" style="display: none; background: #f59e0b; color: #000; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-weight: bold; margin-left: 8px;">DEMO MODE</span>
+        </div>
+        <!-- Pulsing green dot + LIVE text -->
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2)">
+          <div class="live-dot" id="ws-dot"></div><span id="ws-status" style="color:var(--green)">LIVE</span>
+        </div>
+      </div>
+      <!-- Right: Agent address, Explorer link, Chain badge, Clock -->
+      <div style="display:flex;align-items:center;gap:16px;font-size:11px;color:var(--text2)">
+        <span>Agent: <span style="color:var(--blue3)" id="agent-addr">connecting...</span></span>
+        <a href="#" id="explorer-link" target="_blank" style="color:var(--blue3);text-decoration:none">Explorer ↗</a>
+        <div class="chain-badge">Kite Testnet</div>
+        <span id="clock" style="color:var(--text3)">--:--:--</span>
+      </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="grid-container">
+      
+      <!-- LEFT PANEL -->
+      <div class="col-left">
+        <div class="panel-section">
+          <!-- Section 1: Agent Score -->
+          <div class="sec-label">Agent Score</div>
+          <div class="score-ring">
+            <div id="score-num" style="font-size:36px;font-weight:700;color:var(--text);line-height:1">300</div>
+            <div id="score-grade" style="font-size:10px;color:var(--text3);margin-top:4px;letter-spacing:1.5px;text-transform:uppercase">NEW</div>
+            <div id="score-meta" style="font-size:10px;color:var(--text3);margin-top:2px">Kite Testnet · 0 days</div>
+          </div>
+
+          <!-- Section 1.5: Agent Identity -->
+          <div class="sec-label">Agent Identity</div>
+          <div style="border:1px solid #1e2a3a;border-radius:8px;padding:10px;background:#0d1117;margin-bottom:16px">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+              <div id="passport-dot" style="width:6px;height:6px;border-radius:50%;background:#f59e0b"></div>
+              <span id="passport-status" style="font-weight:700;color:#f59e0b;font-size:11px">Wallet Only</span>
+            </div>
+            <div class="cap-row">
+              <span style="color:#64748b">EOA Wallet</span>
+              <a id="id-agent-addr" href="#" target="_blank" style="color:#e2e8f0;text-decoration:none">--</a>
+            </div>
+            <div class="cap-row">
+              <span style="color:#64748b">AA Wallet</span>
+              <a id="agent-aa-addr" href="https://testnet.kitescan.ai/address/0xB0862849a8AB2415c773020cb1BFECA51a87d0Aa" target="_blank" style="color:#e2e8f0;text-decoration:none">0xB086...d0Aa</a>
+            </div>
+            <div class="cap-row">
+              <span style="color:#64748b">Passport</span>
+              <span id="id-passport-addr" style="color:#e2e8f0">--</span>
+            </div>
+            <div class="cap-row">
+              <span style="color:#64748b">Session Budget</span>
+              <span id="id-session-budget" style="color:#10b981">--</span>
+            </div>
+          </div>
+
+          <!-- Section 2: Score Factors -->
+          <div class="sec-label">Score Factors</div>
+          <div style="margin-bottom:16px">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+              <div style="font-size:9px;color:var(--text3);width:56px;text-align:right">Payment</div>
+              <div style="flex:1;background:var(--bg4);border-radius:1px;height:4px;overflow:hidden">
+                <div id="sb-pay" style="width:0%;height:100%;background:var(--blue);border-radius:1px;transition:width .5s"></div>
+              </div>
+              <div id="sv-pay" style="font-size:9px;color:var(--text2);width:28px;text-align:right">0%</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+              <div style="font-size:9px;color:var(--text3);width:56px;text-align:right">Volume</div>
+              <div style="flex:1;background:var(--bg4);border-radius:1px;height:4px;overflow:hidden">
+                <div id="sb-vol" style="width:0%;height:100%;background:var(--blue);border-radius:1px;transition:width .5s"></div>
+              </div>
+              <div id="sv-vol" style="font-size:9px;color:var(--text2);width:28px;text-align:right">0tx</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+              <div style="font-size:9px;color:var(--text3);width:56px;text-align:right">Diversity</div>
+              <div style="flex:1;background:var(--bg4);border-radius:1px;height:4px;overflow:hidden">
+                <div id="sb-div" style="width:0%;height:100%;background:var(--blue);border-radius:1px;transition:width .5s"></div>
+              </div>
+              <div id="sv-div" style="font-size:9px;color:var(--text2);width:28px;text-align:right">0</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+              <div style="font-size:9px;color:var(--text3);width:56px;text-align:right">Age</div>
+              <div style="flex:1;background:var(--bg4);border-radius:1px;height:4px;overflow:hidden">
+                <div id="sb-age" style="width:0%;height:100%;background:var(--blue);border-radius:1px;transition:width .5s"></div>
+              </div>
+              <div id="sv-age" style="font-size:9px;color:var(--text2);width:28px;text-align:right">0d</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+              <div style="font-size:9px;color:var(--text3);width:56px;text-align:right">Trading</div>
+              <div style="flex:1;background:var(--bg4);border-radius:1px;height:4px;overflow:hidden">
+                <div id="factor-trading" style="width:0%;height:100%;background:var(--blue);border-radius:1px;transition:width .5s"></div>
+              </div>
+              <div id="factor-trading-val" style="font-size:9px;color:var(--text2);width:28px;text-align:right">0</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+              <div style="font-size:9px;color:var(--text3);width:56px;text-align:right">Passport</div>
+              <div style="flex:1;background:var(--bg4);border-radius:1px;height:4px;overflow:hidden">
+                <div id="factor-passport" style="width:0%;height:100%;background:var(--blue);border-radius:1px;transition:width .5s"></div>
+              </div>
+              <div id="factor-passport-val" style="font-size:9px;color:var(--text2);width:28px;text-align:right">0</div>
+            </div>
+          </div>
+
+          <!-- Section 3: Capital -->
+          <div class="sec-label">Capital</div>
+          <div style="border:1px solid var(--border2);border-radius:8px;padding:10px;background:var(--bg3);margin-bottom:16px">
+            <div class="cap-row"><span class="label">Max Loan</span><span id="max-loan" style="color:var(--blue3)">$0 PYUSD</span></div>
+            <div class="cap-row"><span class="label">Deployed</span><span id="deployed">$0.00</span></div>
+            <div class="cap-row"><span class="label">Available</span><span id="avail" style="color:var(--green)">$0.00</span></div>
+            <div style="background:var(--bg4);border-radius:2px;height:4px;margin-top:4px;overflow:hidden">
+              <div id="cap-bar" style="width:0%;height:100%;background:linear-gradient(90deg,var(--blue2),var(--blue));transition:width .5s"></div>
+            </div>
+          </div>
+
+          <!-- Section 3.5: Active Loan -->
+          <div class="sec-label">Active Loan</div>
+          <div id="loan-card" style="border:1px solid #1e2a3a;border-radius:8px;padding:10px;background:#0d1117;margin-bottom:16px">
+            <div style="font-size:10px;color:var(--text3);text-align:center">No active loan</div>
+          </div>
+
+          <!-- Section 4: Risk Parameters -->
+          <div class="sec-label">Risk Parameters</div>
+          <div style="display:grid;gap:6px;margin-bottom:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:11px;color:var(--text3)">Stop Loss</span><span class="badge badge-red">−3.0%</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:11px;color:var(--text3)">Take Profit</span><span class="badge badge-green">+5.0%</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:11px;color:var(--text3)">Max Hold</span><span class="badge badge-amber">5 min</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:11px;color:var(--text3)">Size/Trade</span><span class="badge badge-blue">$10.00</span>
+            </div>
+          </div>
+
+          <!-- Section 5: Performance Stats -->
+          <div class="sec-label">Performance</div>
+          <div style="display:grid;gap:4px">
+            <div class="cap-row"><span class="label">Total Trades</span><span id="perf-trades">0</span></div>
+            <div class="cap-row"><span class="label">Win Rate</span><span id="perf-winrate" style="color:var(--green)">0%</span></div>
+            <div class="cap-row"><span class="label">Total P&L</span><span id="perf-pnl" style="color:var(--text)">$0.0000</span></div>
+            <div class="cap-row"><span class="label">Loop #</span><span id="loop-num">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CENTER PANEL -->
+      <div class="col-center">
+        <!-- Chart Header -->
+        <div class="chart-header">
+          <div style="display:flex;align-items:baseline;gap:10px">
+            <span style="font-size:14px;font-weight:700;color:var(--text)">ETH/USD</span>
+            <span id="eth-price" style="font-size:20px;font-weight:700;color:var(--text)">$0.00</span>
+            <span id="eth-change" style="font-size:11px;padding:2px 6px;border-radius:3px;background:#10b98115;color:var(--green)">+0.00%</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:16px">
+            <span style="font-size:10px;color:var(--text3)">H: <span id="price-high" style="color:var(--text2)">--</span> &nbsp; L: <span id="price-low" style="color:var(--text2)">--</span></span>
+            <div style="display:flex;gap:10px;font-size:11px;color:var(--text3)">
+              <span style="cursor:pointer">1M</span>
+              <span style="cursor:pointer;color:var(--blue3);border-bottom:2px solid var(--blue)">5M</span>
+              <span style="cursor:pointer">15M</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Chart Container -->
+        <div class="chart-container">
+          <canvas id="priceChart" role="img" aria-label="ETH Price Chart"></canvas>
+        </div>
+
+        <!-- Open Positions Panel -->
+        <div class="positions-panel">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div class="sec-label" style="margin:0">Open Positions</div>
+            <div id="pos-count" style="font-size:10px;color:var(--text3)">0 positions</div>
+          </div>
+          <div id="positions-list">
+            <div style="text-align:center;padding:20px;color:var(--text3);font-size:11px">
+              No open positions — agent waiting for signal
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT PANEL -->
+      <div class="col-right">
+        <div class="panel-section" style="display:flex;flex-direction:column;height:100%">
+          
+          <!-- Last Signal -->
+          <div class="sec-label">Last Signal</div>
+          <div id="signal-card" style="border:1px solid var(--border2);border-radius:6px;padding:10px;background:var(--bg3);margin-bottom:16px">
+            <div style="font-size:10px;color:var(--text3);text-align:center">Waiting for AI analysis...</div>
+          </div>
+
+          <!-- Last Repayment -->
+          <div class="sec-label">Last Repayment</div>
+          <div id="repayment-card" style="border:1px solid #1e2a3a;border-radius:6px;padding:10px;background:#0d1117;margin-bottom:16px">
+            <div style="font-size:10px;color:#64748b;text-align:center">No repayments yet</div>
+          </div>
+
+          <!-- Market Overview -->
+          <div class="sec-label">Market Overview</div>
+          <div style="margin-bottom:16px">
+            <div class="cap-row"><span class="label">ETH/USD</span><span id="eth-mini">$0</span></div>
+            <div class="cap-row"><span class="label">BTC/USD</span><span id="btc-mini">$0</span></div>
+            <div class="cap-row"><span class="label">ETH Vol 24h</span><span style="color:var(--text2)">--</span></div>
+            <div class="cap-row"><span class="label">Network</span><span id="ws-network-status" style="color:var(--amber)">● Reconnecting...</span></div>
+          </div>
+          
+          <!-- Trade History -->
+          <div class="sec-label">Trade History</div>
+          <div id="trade-history" style="margin-bottom:16px">
+            <div style="font-size:10px;color:var(--text3);text-align:center">No closed trades yet</div>
+          </div>
+
+          <!-- On-Chain Activity -->
+          <div class="sec-label">On-Chain Activity</div>
+          <div class="tx-feed" id="tx-feed">
+            <div style="font-size:10px;color:var(--text3);text-align:center">No transactions yet</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <script>
+    // Constants
+    const WS_URL = "ws://localhost:4001"; // Change to deployed agent WS URL for production
+    
+    // Globals
+    let ws = null;
+    let wsReconnectTimer = null;
+    const priceHistory = [];
+    const MAX_POINTS = 30;
+    const positionOpenTimes = {};
+    const closedTrades = [];
+
+    // Setup Chart.js
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+    gradient.addColorStop(0, 'rgba(59, 130, 246, 0.25)');
+    gradient.addColorStop(1, 'rgba(59, 130, 246, 0)');
+
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        datasets: [{
+          data: priceHistory,
+          borderColor: '#3b82f6',
+          borderWidth: 1.5,
+          backgroundColor: gradient,
+          fill: true,
+          pointRadius: 0,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 200 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: '#141d35',
+            borderColor: '#1e3050',
+            borderWidth: 1,
+            titleColor: '#94a3b8',
+            bodyColor: '#f1f5f9',
+            callbacks: {
+              title: items => new Date(items[0].parsed.x).toLocaleTimeString(),
+              label: items => '$' + items.parsed.y.toFixed(2)
+            }
+          }
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            ticks: { color: '#475569', font: { size: 9, family: 'monospace' },
+              callback: v => new Date(v).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) },
+            grid: { color: '#1e3050', lineWidth: 0.5 }
+          },
+          y: {
+            position: 'right',
+            ticks: { color: '#475569', font: { size: 9, family: 'monospace' },
+              callback: v => '$' + v.toFixed(0) },
+            grid: { color: '#1e3050', lineWidth: 0.5 }
+          }
+        }
+      }
+    });
+
+    // WebSockets
+    function connectWS() {
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        document.getElementById('ws-status').textContent = 'LIVE';
+        document.getElementById('ws-status').style.color = 'var(--green)';
+        document.getElementById('ws-dot').style.background = 'var(--green)';
+        document.getElementById('ws-dot').style.animation = 'pulse 2s ease-in-out infinite';
+        
+        document.getElementById('ws-network-status').textContent = '● Live';
+        document.getElementById('ws-network-status').style.color = 'var(--green)';
+        clearTimeout(wsReconnectTimer);
+
+        const badge = document.getElementById('demo-badge');
+        if (badge) badge.style.display = 'none';
+      };
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        console.log('📦 Received:', msg.type);
+        if (msg.type === 'state') {
+          updateDashboard(msg.data);
+        }
+      };
+
+      ws.onclose = () => {
+        document.getElementById('ws-status').textContent = 'RECONNECTING...';
+        document.getElementById('ws-status').style.color = 'var(--amber)';
+        document.getElementById('ws-dot').style.background = 'var(--amber)';
+        document.getElementById('ws-dot').style.animation = 'none';
+        
+        document.getElementById('ws-network-status').textContent = '● Reconnecting...';
+        document.getElementById('ws-network-status').style.color = 'var(--amber)';
+        
+        setTimeout(() => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) {
+            startDemoMode();
+          }
+        }, 5000);
+
+        wsReconnectTimer = setTimeout(connectWS, 3000);
+      };
+
+      ws.onerror = () => ws.close();
+    }
+    
+    // Core update loop
+    function updateDashboard(state) {
+      if (state.agentAddress) {
+        document.getElementById('agent-addr').textContent =
+          state.agentAddress.slice(0,6) + '...' + state.agentAddress.slice(-4);
+        document.getElementById('explorer-link').href =
+          'https://testnet.kitescan.ai/address/' + state.agentAddress;
+          
+        const idAgentAddr = document.getElementById('id-agent-addr');
+        if (idAgentAddr) {
+          idAgentAddr.textContent = state.agentAddress.slice(0,6) + '...' + state.agentAddress.slice(-4);
+          idAgentAddr.href = 'https://testnet.kitescan.ai/address/' + state.agentAddress;
+        }
+
+        const aaAddr = document.getElementById('agent-aa-addr');
+        if (aaAddr && state.aaAddress) {
+          aaAddr.textContent = state.aaAddress.slice(0,6) + '...' + state.aaAddress.slice(-4);
+          aaAddr.href = 'https://testnet.kitescan.ai/address/' + state.aaAddress;
+        }
+      }
+
+      if (state.passport) {
+        const p = state.passport;
+        const dot = document.getElementById('passport-dot');
+        const status = document.getElementById('passport-status');
+        if (p.verified) {
+          dot.style.background = '#10b981';
+          status.style.color = '#10b981';
+          status.textContent = 'Passport Verified';
+        } else {
+          dot.style.background = '#f59e0b';
+          status.style.color = '#f59e0b';
+          status.textContent = 'Wallet Only';
+        }
+        
+        if (p.address) {
+          document.getElementById('id-passport-addr').textContent = p.address.slice(0,6) + '...' + p.address.slice(-4);
+        } else {
+          document.getElementById('id-passport-addr').textContent = 'None';
+        }
+        
+        if (p.sessionBudgetRemaining) {
+          document.getElementById('id-session-budget').textContent = '$' + p.sessionBudgetRemaining + ' PYUSD';
+        } else {
+          document.getElementById('id-session-budget').textContent = '--';
+        }
+      }
+
+      if (state.scoreData) updateScore(state.scoreData);
+
+      if (state.marketPrices?.ETH) updatePrice(state.marketPrices.ETH);
+      if (state.marketPrices?.BTC) {
+        document.getElementById('btc-mini').textContent =
+          '$' + state.marketPrices.BTC.price.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      }
+
+      if (state.openPositions) renderPositions(state.openPositions, state.marketPrices?.ETH?.price);
+      if (state.lastSignal) renderSignal(state.lastSignal);
+      if (state.recentTxs) renderTxFeed(state.recentTxs);
+      if (state.vaultStats) updatePerf(state.vaultStats);
+      if (state.lastRepayment) renderRepayment(state.lastRepayment);
+      if (state.loan) renderLoan(state.loan);
+
+      if (state.loopCount !== undefined) {
+        document.getElementById('loop-num').textContent = state.loopCount;
+      }
+
+      const sigModelEl = document.getElementById('sig-model');
+      if (sigModelEl) {
+        sigModelEl.textContent = state.lastSignal?.model ?? 'KiteCredit Signal Engine v1';
+      }
+
+      const borrowed  = parseFloat(state.loan?.borrowed ?? '0');
+      const maxLoan   = state.scoreData?.maxLoan ?? 0;
+      const available = Math.max(0, maxLoan - borrowed).toFixed(2);
+      const availEl = document.getElementById('avail');
+      if (availEl) availEl.textContent = '$' + available;
+    }
+
+    // Price Update
+    function updatePrice(ethData) {
+      const price  = ethData?.price;
+      const change = ethData?.change12m ?? ethData?.change4m ?? 0;
+
+      if (price == null || isNaN(price)) return;
+
+      priceHistory.push({ x: Date.now(), y: price });
+      if (priceHistory.length > MAX_POINTS) priceHistory.shift();
+
+      chart.data.datasets[0].data = [...priceHistory];
+      chart.update('none');
+
+      document.getElementById('eth-price').textContent = '$' + price.toFixed(2);
+      document.getElementById('eth-mini').textContent  = '$' + price.toFixed(2);
+
+      const changeEl = document.getElementById('eth-change');
+      changeEl.textContent = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
+      changeEl.style.background = change >= 0 ? '#10b98115' : '#ef444415';
+      changeEl.style.color = change >= 0 ? 'var(--green)' : 'var(--red)';
+
+      if (priceHistory.length > 0) {
+        const hi = Math.max(...priceHistory.map(p => p.y));
+        const lo = Math.min(...priceHistory.map(p => p.y));
+        document.getElementById('price-high').textContent = '$' + hi.toFixed(0);
+        document.getElementById('price-low').textContent  = '$' + lo.toFixed(0);
+      }
+    }
+
+    // Score Update
+    function updateScore(scoreData) {
+      const s = scoreData.score || 300;
+      document.getElementById('score-num').textContent = s;
+      document.getElementById('score-meta').textContent = `Kite Testnet · ${scoreData.agentAgeDays || 0} days`;
+      
+      let grade = "NEW", col = "var(--text3)", gradeCol = "var(--text3)";
+      if (s >= 750) { grade = "EXCELLENT"; gradeCol = "var(--green)"; col = "var(--text)";}
+      else if (s >= 700) { grade = "GOOD"; gradeCol = "var(--blue)"; col = "var(--text)";}
+      else if (s >= 600) { grade = "FAIR"; gradeCol = "var(--amber)"; col = "var(--text)";}
+      else if (s >= 500) { grade = "POOR"; gradeCol = "var(--red)"; col = "var(--text)";}
+      
+      document.getElementById('score-num').style.color = col;
+      
+      const gradeEl = document.getElementById('score-grade');
+      gradeEl.textContent = grade;
+      gradeEl.style.color = gradeCol;
+
+      // Factors
+      const pay = scoreData.paymentRate || 0;
+      document.getElementById('sb-pay').style.width = Math.min(pay, 100) + '%';
+      document.getElementById('sv-pay').textContent = pay + '%';
+
+      const vol = scoreData.txCount || 0;
+      document.getElementById('sb-vol').style.width = Math.min(vol*2, 100) + '%';
+      document.getElementById('sv-vol').textContent = vol + 'tx';
+
+      const div = scoreData.diversity || 0;
+      document.getElementById('sb-div').style.width = Math.min(div*20, 100) + '%';
+      document.getElementById('sv-div').textContent = div;
+
+      const age = scoreData.agentAgeDays || 0;
+      document.getElementById('sb-age').style.width = Math.min(age*2, 100) + '%';
+      document.getElementById('sv-age').textContent = age + 'd';
+
+      // Trading performance (max 55 pts)
+      const tradingPts = scoreData.factors?.trading ?? 0;
+      const tradingPct = (tradingPts / 55) * 100;
+      document.getElementById('factor-trading').style.width = tradingPct + '%';
+      document.getElementById('factor-trading-val').textContent = tradingPts;
+
+      // Passport reputation (max 27 pts)
+      const passportPts = scoreData.factors?.discipline ?? 0;
+      const passportPct = (passportPts / 27) * 100;
+      document.getElementById('factor-passport').style.width = passportPct + '%';
+      document.getElementById('factor-passport-val').textContent = passportPts;
+
+      // Capital
+      const maxL = scoreData.maxLoan || 0;
+      document.getElementById('max-loan').textContent = '$' + maxL + ' PYUSD';
+      
+      // Update max loan available calculations in UI (just visual)
+      // Actually we need to calculate available from maxL - deployed
+      // Just placeholder for now as vaultStats will provide real PnL
+    }
+
+    function updatePerf(stats) {
+      document.getElementById('perf-trades').textContent = stats.totalTrades;
+      const wr = stats.totalTrades > 0 ? ((stats.winCount / stats.totalTrades) * 100).toFixed(0) : 0;
+      document.getElementById('perf-winrate').textContent = wr + '%';
+      
+      const pnl = stats.totalPnl;
+      const pnlEl = document.getElementById('perf-pnl');
+      pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(4);
+      pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+
+    // Render Positions
+    function renderPositions(positions, currentPrice) {
+      document.getElementById('pos-count').textContent = positions.length + ' positions';
+      const list = document.getElementById('positions-list');
+      
+      if (!positions || positions.length === 0) {
+        list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3);font-size:11px">No open positions — agent waiting for signal</div>';
+        document.getElementById('deployed').textContent = '$0.00';
+        // Max loan minus deployed
+        const mlStr = document.getElementById('max-loan').textContent.replace(/[^0-9.-]+/g,"");
+        document.getElementById('cap-bar').style.width = '0%';
+        return;
+      }
+
+      let deployed = 0;
+      let html = '';
+      
+      positions.forEach(pos => {
+        deployed += pos.sizeUSDC;
+        const cp = currentPrice || pos.entryPrice;
+        const priceDiff = (cp - pos.entryPrice) / pos.entryPrice;
+        const pnlPct = (pos.side === 'LONG' ? priceDiff : -priceDiff) * 100;
+        const pnlUSD = (pnlPct / 100) * pos.sizeUSDC;
+        
+        let pColor = pnlUSD >= 0 ? 'var(--green)' : 'var(--red)';
+        let sideBadge = pos.side === 'LONG' ? 
+          '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#10b98120;color:var(--green);letter-spacing:.5px">LONG</span>' :
+          '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#ef444420;color:var(--red2);letter-spacing:.5px">SHORT</span>';
+        let barColor = pos.side === 'LONG' ? 'var(--green)' : 'var(--red)';
+        
+        let progW = 0;
+        let progC = 'var(--green)';
+        if (pnlPct >= 0) {
+          progW = Math.min((pnlPct / 5) * 100, 100);
+        } else {
+          progW = Math.min((Math.abs(pnlPct) / 3) * 100, 100);
+          progC = 'var(--red)';
+        }
+
+        html += `
+        <div style="border:1px solid var(--border2);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:var(--bg3);position:relative;overflow:hidden">
+          <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:${barColor}"></div>
+          <div style="margin-left:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:12px;font-weight:700;color:var(--text)">${pos.asset}</span>
+                ${sideBadge}
+              </div>
+              <span style="font-size:13px;font-weight:700;color:${pColor}">${pnlUSD >= 0 ? '+' : ''}$${Math.abs(pnlUSD).toFixed(4)}</span>
+            </div>
+            <div style="font-size:10px;color:var(--text3);display:flex;gap:12px">
+              <span>Entry $<span>${pos.entryPrice.toFixed(2)}</span></span>
+              <span>Now $<span>${cp.toFixed(2)}</span></span>
+              <span style="color:${pColor}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>
+              <span>Age <span data-open-time="${pos.openedAt}">0s</span></span>
+            </div>
+            <div style="height:3px;background:var(--bg4);border-radius:1px;margin-top:5px;overflow:hidden">
+              <div style="height:100%;border-radius:1px;background:${progC};width:${progW}%;transition:width .3s"></div>
+            </div>
+          </div>
+        </div>`;
+      });
+      list.innerHTML = html;
+
+      // Update capital
+      document.getElementById('deployed').textContent = '$' + deployed.toFixed(2);
+      const mlStr = document.getElementById('max-loan').textContent.replace(/[^0-9.-]+/g,"");
+      const ml = parseFloat(mlStr) || 0;
+      const capPct = ml > 0 ? Math.min((deployed / ml) * 100, 100) : 0;
+      document.getElementById('cap-bar').style.width = capPct + '%';
+    }
+
+    // Render Signal
+    function renderSignal(sig) {
+      if (!sig) return;
+      let badge = '';
+      if (sig.side === 'LONG') badge = '<span style="font-size:9px;padding:2px 6px;border-radius:3px;background:#3b82f620;color:var(--blue3);border:1px solid var(--blue2);letter-spacing:.5px;font-weight:700">LONG</span>';
+      else if (sig.side === 'SHORT') badge = '<span style="font-size:9px;padding:2px 6px;border-radius:3px;background:#ef444420;color:var(--red2);border:1px solid #991b1b;letter-spacing:.5px;font-weight:700">SHORT</span>';
+      else badge = '<span style="font-size:9px;padding:2px 6px;border-radius:3px;background:#f59e0b20;color:var(--amber2);border:1px solid #92400e;letter-spacing:.5px;font-weight:700">SKIP</span>';
+
+      document.getElementById('signal-card').innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-size:11px;font-weight:700;color:var(--text)">${sig.asset || 'ETH/USD'}</span>
+          ${badge}
+        </div>
+        <div style="font-size:10px;color:var(--text2);line-height:1.4">${sig.reason}</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:4px"><span id="sig-model">—</span> · ${new Date().toLocaleTimeString()}</div>
+      `;
+    }
+
+    // Render Repayment Card
+    function renderRepayment(repay) {
+      const card = document.getElementById('repayment-card');
+      if (!repay) return;
+
+      if (repay.loss) {
+        card.innerHTML = `
+          <div style="text-align:center">
+            <div style="font-size:11px;font-weight:700;color:#f59e0b;margin-bottom:4px">Last position: loss</div>
+            <div style="font-size:10px;color:#f59e0b">No repayment this cycle</div>
+          </div>
+        `;
+        return;
+      }
+
+      card.innerHTML = `
+        <div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="font-size:10px;color:#64748b">Total</span>
+            <span style="font-size:11px;font-weight:700;color:#e2e8f0">${repay.total} PYUSD</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <span style="font-size:10px;color:#64748b">→ Pool (30%)</span>
+            <span style="font-size:10px;color:#10b981">${repay.toPool}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <span style="font-size:10px;color:#64748b">→ Agent (70%)</span>
+            <span style="font-size:10px;color:#10b981">${repay.toAgent}</span>
+          </div>
+        </div>
+        <a href="${repay.explorerUrl}" target="_blank" style="font-size:10px;color:var(--blue3);text-decoration:none;display:block;text-align:center">view on KiteScan ↗</a>
+      `;
+    }
+
+    // Render Loan Card
+    function renderLoan(loan) {
+      const card = document.getElementById('loan-card');
+      if (!loan || !loan.hasLoan) {
+        card.innerHTML = '<div style="font-size:10px;color:var(--text3);text-align:center">No active loan</div>';
+        return;
+      }
+      
+      let linkHtml = loan.explorerUrl 
+        ? `<a href="${loan.explorerUrl}" target="_blank" style="font-size:10px;color:var(--blue3);text-decoration:none;display:block;text-align:center;margin-top:8px">view on KiteScan ↗</a>`
+        : '';
+        
+      card.innerHTML = `
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:11px;color:#64748b">Borrowed</span>
+          <span style="font-size:11px;color:#e2e8f0">${Number(loan.borrowed).toFixed(2)} PYUSD</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:11px;color:#64748b">Interest</span>
+          <span style="font-size:11px;color:#f59e0b">${Number(loan.interest).toFixed(4)} PYUSD</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:11px;color:#64748b">Total owed</span>
+          <span style="font-size:11px;font-weight:700;color:#e2e8f0">${Number(loan.total).toFixed(4)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:2px">
+          <span style="font-size:11px;color:#64748b">Rate</span>
+          <span style="font-size:11px;color:#e2e8f0">${(loan.rateBps / 100).toFixed(1)}% APR</span>
+        </div>
+        ${linkHtml}
+      `;
+    }
+
+    // Render TX feed
+    function renderTxFeed(txs) {
+      const feed = document.getElementById('tx-feed');
+      if (!txs || txs.length === 0) return;
+      let html = '';
+      
+      txs.forEach(tx => {
+        let dotColor = 'var(--blue)';
+        if (tx.type.includes('OPEN')) dotColor = 'var(--blue)';
+        else if (tx.type.includes('CLOSE') && tx.type.includes('+')) dotColor = 'var(--green)';
+        else if (tx.type.includes('CLOSE') && tx.type.includes('-')) dotColor = 'var(--red)';
+        else if (tx.type.includes('SCORE')) dotColor = 'var(--amber)';
+        else if (tx.type.includes('REPAY')) dotColor = '#a855f7';
+        
+        // Extract trade history items
+        if (tx.type.includes('CLOSE') && !closedTrades.find(t => t.hash === tx.hash)) {
+            const isWin = tx.type.includes('+');
+            const match = tx.type.match(/([+-]\$[0-9.]+)/);
+            const pnlStr = match ? match[0] : (isWin ? '+$0.00' : '-$0.00');
+            closedTrades.unshift({ hash: tx.hash, pnl: pnlStr, isWin });
+            if(closedTrades.length > 4) closedTrades.pop();
+            renderTradeHistory();
+        }
+
+        html += `
+        <div class="tx-item" style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);align-items:flex-start;animation:slideIn 0.3s ease">
+          <div style="width:6px;height:6px;border-radius:50%;background:${dotColor};margin-top:4px;flex-shrink:0"></div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:10px;color:var(--text2)">${tx.type}</div>
+            <a href="https://testnet.kitescan.ai/tx/${tx.hash}" target="_blank" style="font-size:10px;color:var(--blue3);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;text-decoration:none">
+              ${tx.hash.slice(0, 16)}... ↗
+            </a>
+          </div>
+          <div style="font-size:10px;color:var(--text3);flex-shrink:0">${new Date(tx.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>
+        </div>
+        `;
+      });
+      feed.innerHTML = html;
+    }
+
+    function renderTradeHistory() {
+        const hist = document.getElementById('trade-history');
+        if(closedTrades.length === 0) return;
+        let html = '';
+        closedTrades.forEach(t => {
+            html += `
+            <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:10px">
+              <span style="color:var(--text2)">ETH/USD</span>
+              <span style="color:${t.isWin ? 'var(--green)' : 'var(--red)'}">${t.pnl}</span>
+              <span style="color:var(--text3)">${t.isWin ? 'WIN' : 'LOSS'}</span>
+            </div>
+            `;
+        });
+        hist.innerHTML = html;
+    }
+
+    // Simulated Demo Mode
+    let demoBasePrice = 2333.86;
+    let demoInterval = null;
+
+    function startDemoMode() {
+      const badge = document.getElementById('demo-badge');
+      if (badge) badge.style.display = 'inline-block';
+      if (demoInterval) return;
+      demoInterval = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          clearInterval(demoInterval);
+          demoInterval = null;
+          return;
+        }
+        demoBasePrice += (Math.random() - 0.488) * 6;
+        demoBasePrice = Math.max(2200, Math.min(2500, demoBasePrice));
+        updatePrice({ price: demoBasePrice, change24h: (Math.random() - 0.5) * 8 });
+      }, 2000);
+    }
+
+    // Setup Clocks & Timers
+    function formatAge(openedAt) {
+      const sec = Math.floor((Date.now() - (openedAt * 1000)) / 1000);
+      if (sec < 60) return sec + 's';
+      const min = Math.floor(sec / 60);
+      const s   = sec % 60;
+      return min + 'm ' + s + 's';
+    }
+
+    setInterval(() => {
+      document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+      document.querySelectorAll('[data-open-time]').forEach(el => {
+        const t = parseInt(el.dataset.openTime);
+        if(t > 0) el.textContent = formatAge(t);
+      });
+    }, 1000);
+
+    // Add keyframes for slideIn dynamically
+    const style = document.createElement('style');
+    style.innerHTML = `@keyframes slideIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }`;
+    document.head.appendChild(style);
+
+    // Start everything
+    connectWS();
+  </script>
+</body>
+</html>

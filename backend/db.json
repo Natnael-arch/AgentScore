@@ -1,0 +1,35 @@
+{
+  "agents": [
+    {
+      "id": "xcjz80h",
+      "created_at": "2026-05-17T12:05:42.017Z",
+      "address": "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A",
+      "score": 629,
+      "name": "Autonomous Agent",
+      "identity_status": "Verified",
+      "updated_at": "2026-05-17T12:45:46.659Z"
+    },
+    {
+      "id": "nkgnsqg",
+      "created_at": "2026-05-17T12:10:15.415Z",
+      "address": "0xC201B98d96d09f2B15Cb7fe8E8c40Da6D664B15c",
+      "name": "AI Test Agent",
+      "agent_type": "Autonomous Agent",
+      "model_hash": "0x1234567890abcdef",
+      "passport_verified": true
+    }
+  ],
+  "lender_positions": [],
+  "lending_pool": [
+    {
+      "id": "main",
+      "total_deposited": 0,
+      "total_borrowed": "320",
+      "total_repaid": "200",
+      "total_interest_earned": "15"
+    }
+  ],
+  "loans": [],
+  "transactions": [],
+  "loan_repayments": []
+}
